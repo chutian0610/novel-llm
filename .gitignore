@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+.next/
+out/
+dist/
+*.db
+*.sqlite3
+novel_export.md

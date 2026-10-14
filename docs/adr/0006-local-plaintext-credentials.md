@@ -1,0 +1,3 @@
+# Accept plaintext local credentials for the first version
+
+For local-only convenience, the first version may store LLM provider keys as plaintext rows in PostgreSQL and load the database password from the default local configuration file. Production model configuration is authoritative in the database, while tests use an explicit test configuration file. API responses never return a complete provider key. There is no centralized log-redaction guarantee, so database contents and logs must be treated as sensitive local data. This trade-off avoids secret-management complexity now and must be reversed before any non-local access, multi-user mode, or log aggregation is enabled.

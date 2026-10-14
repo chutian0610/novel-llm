@@ -1,0 +1,3 @@
+# Keep the single-author workbench local
+
+The workbench has no registration, login, accounts, or application authentication in the first version. Only the web interface is published to `127.0.0.1`; API, worker, database, and storage remain on the internal Docker network and no LAN, VPN, or public listener is provided. An author working remotely can use an external mechanism such as SSH tunneling without making remote exposure a product security guarantee. Enabling non-local access requires a new decision covering authentication, transport security, credential storage, log handling, and isolation from other local users.
