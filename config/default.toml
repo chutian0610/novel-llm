@@ -1,0 +1,11 @@
+# Novel LLM infrastructure defaults (ADR-0002).
+# Machine-local overrides belong in config/local.toml (gitignored).
+
+[database]
+url = "postgresql+asyncpg://novel:novel@postgres:5432/novel_llm"
+
+[storage]
+path = "/var/lib/novel-llm/storage"
+
+[log]
+level = "INFO"

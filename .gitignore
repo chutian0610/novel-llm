@@ -11,3 +11,4 @@ dist/
 *.db
 *.sqlite3
 novel_export.md
+config/local.toml
