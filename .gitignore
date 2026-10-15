@@ -1,4 +1,5 @@
 .env
+.zcode/
 .venv/
 __pycache__/
 *.pyc
@@ -10,3 +11,5 @@ dist/
 *.db
 *.sqlite3
 novel_export.md
+config/local.toml
+frontend/tsconfig.tsbuildinfo
