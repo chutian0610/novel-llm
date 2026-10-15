@@ -10,12 +10,14 @@ the jobs tables exist; the Job runtime ticket replaces it with a probe over
 the real queue.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 
+from novel_llm.api.dependencies import get_config
+from novel_llm.config import Config
 from novel_llm.infrastructure.db import create_db_engine
 from novel_llm.infrastructure.migrations import head_revision
 
@@ -43,8 +45,10 @@ async def healthz() -> HealthResponse:
 
 
 @router.get("/readyz", response_model=ReadinessResponse)
-async def readyz(request: Request, response: Response) -> ReadinessResponse:
-    database_url = request.app.state.config.database.url
+async def readyz(
+    response: Response, config: Annotated[Config, Depends(get_config)]
+) -> ReadinessResponse:
+    database_url = config.database.url
     checks: dict[str, CheckStatus] = {}
 
     engine = create_db_engine(database_url)
@@ -94,6 +98,9 @@ async def _check_queue_claim_primitive(engine) -> CheckStatus:
             await connection.execute(
                 sa.text("SELECT version_num FROM alembic_version FOR UPDATE SKIP LOCKED")
             )
-        return CheckStatus(status="ok")
+        return CheckStatus(
+            status="ok",
+            detail="claim primitive probe; the jobs table arrives with the Job runtime ticket",
+        )
     except Exception as error:
         return CheckStatus(status="error", detail=f"claim primitive failed: {error}")

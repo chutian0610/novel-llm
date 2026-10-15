@@ -14,8 +14,11 @@ log = logging.getLogger("novel_llm.worker")
 
 
 async def main() -> None:
-    logging.basicConfig(level="INFO", format="%(levelname)s %(name)s %(message)s")
     config = load_config()
+    logging.basicConfig(
+        level=config.log.level,
+        format="%(levelname)s %(name)s %(message)s",
+    )
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

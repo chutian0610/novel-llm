@@ -1,7 +1,10 @@
-# Dev/test override ONLY: publishes the database on loopback so host-run
-# pytest can reach it. The production stack publishes nothing but the web UI.
-# Usage: docker compose -f compose.yaml -f compose.test.yaml up -d postgres
+# Dev/test override ONLY: publishes the database on loopback (port 5433, to
+# avoid clashing with any PostgreSQL the host already runs on 5432) so
+# host-run pytest can reach it. The production stack publishes nothing but
+# the web UI. Run with its own project name (-p novel-llm-test) so the main
+# stack and the test stack never recreate each other's containers.
+# Usage: docker compose -f compose.yaml -f compose.test.yaml -p novel-llm-test up -d postgres
 services:
   postgres:
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5433:5432"

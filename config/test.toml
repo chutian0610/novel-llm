@@ -1,9 +1,10 @@
 # Test profile (ADR-0002): layered over default.toml and deliberately ignores
 # config/local.toml, so tests never depend on one machine's overrides.
-# The database is published on 127.0.0.1 by compose.test.yaml.
+# The database is published on 127.0.0.1:5433 by compose.test.yaml (the test
+# compose project runs separately from the main stack).
 
 [database]
-url = "postgresql+asyncpg://novel:novel@127.0.0.1:5432/novel_llm_test"
+url = "postgresql+asyncpg://novel:novel@127.0.0.1:5433/novel_llm_test"
 
 [storage]
 path = "/tmp/novel-llm-test-storage"
