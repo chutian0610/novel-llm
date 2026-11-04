@@ -5,7 +5,6 @@ validating references and invariants inside that transaction (there are no
 physical foreign keys to rely on).
 """
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -145,6 +144,31 @@ class ProjectPage:
     next_cursor: str | None
 
 
+class _Unset:
+    """Sentinel distinguishing 'field not sent' from 'field explicitly null'."""
+
+
+Unset = _Unset()
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectChanges:
+    """A typed change set for Project mutation: Unset means untouched,
+    None means explicitly cleared, a value means replaced."""
+
+    title: str | None | _Unset = Unset
+    description: str | None | _Unset = Unset
+    language: str | None | _Unset = Unset
+
+    def to_values(self) -> dict[str, str | None]:
+        values: dict[str, str | None] = {}
+        for field in ("title", "description", "language"):
+            value = getattr(self, field)
+            if not isinstance(value, _Unset):
+                values[field] = value
+        return values
+
+
 async def list_projects(
     session: AsyncSession,
     *,
@@ -194,19 +218,21 @@ async def update_project(
     *,
     project_id: UUID,
     expected_revision: int | None,
-    changes: Mapping[str, Any],
+    changes: ProjectChanges,
 ) -> Project:
     """Apply mutable-field changes under optimistic concurrency: the UPDATE
     carries the expected revision (from If-Match), so a stale writer changes
-    nothing. Archived Projects reject edits; an empty change set is a read."""
-    if not changes:
+    nothing. Archived Projects reject edits; an empty change set is a read
+    returning the current state without a revision bump."""
+    values = changes.to_values()
+    if not values:
         return await get_project(session, project_id)
 
     now = datetime.now(UTC)
     statement = (
         update(ProjectRow)
         .where(ProjectRow.id == project_id, ProjectRow.status == "active")
-        .values(**changes, revision=ProjectRow.revision + 1, updated_at=now)
+        .values(**values, revision=ProjectRow.revision + 1, updated_at=now)
         .returning(ProjectRow)
     )
     if expected_revision is not None:

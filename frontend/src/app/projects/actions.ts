@@ -8,6 +8,9 @@
  */
 
 import { apiClient } from "../../lib/api/client";
+import type { components } from "../../lib/api/schema";
+
+type ProjectResource = components["schemas"]["ProjectResource"];
 
 export interface ProjectView {
   id: string;
@@ -38,35 +41,55 @@ function problemMessage(error: unknown): string {
   return body.detail ? `${label}(${body.detail})` : label;
 }
 
-export async function listProjects(): Promise<ActionResult<ProjectView[]>> {
-  const { data, error } = await apiClient.GET("/api/v1/projects", {
-    params: { query: { limit: 100 } },
-  });
-  if (error !== undefined) {
-    return { ok: false, error: problemMessage(error) };
-  }
+function toProjectView(data: ProjectResource): ProjectView {
   return {
-    ok: true,
-    value: data.items.map((item) => ({
-      id: item.id,
-      title: item.title,
-      description: item.description,
-      language: item.language,
-      status: item.status,
-      createdAt: item.created_at,
-      updatedAt: item.updated_at,
-    })),
+    id: data.id,
+    title: data.title,
+    description: data.description,
+    language: data.language,
+    status: data.status,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at,
   };
 }
 
-export async function createProject(formData: FormData): Promise<ActionResult<ProjectView>> {
+// The list endpoint pages at limit ≤ 100; walk the cursor so the workbench
+// never silently truncates. 20 pages ≈ 2000 projects is a safe stop for a
+// single-author workbench.
+const MAX_PAGES = 20;
+
+export async function listProjects(): Promise<ActionResult<ProjectView[]>> {
+  const items: ProjectView[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const { data, error } = await apiClient.GET("/api/v1/projects", {
+      params: { query: { limit: 100, ...(cursor !== undefined ? { cursor } : {}) } },
+    });
+    if (error !== undefined) {
+      return { ok: false, error: problemMessage(error) };
+    }
+    items.push(...data.items.map(toProjectView));
+    if (data.next_cursor === null) {
+      return { ok: true, value: items };
+    }
+    cursor = data.next_cursor;
+  }
+  return { ok: true, value: items };
+}
+
+export async function createProject(
+  formData: FormData,
+  idempotencyKey: string,
+): Promise<ActionResult<ProjectView>> {
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  const { data, error, response } = await apiClient.POST("/api/v1/projects", {
-    headers: {
-      // A fresh key per create attempt: a retried submission replays instead
-      // of duplicating (ADR-0008).
-      "Idempotency-Key": crypto.randomUUID(),
+  const { data, error } = await apiClient.POST("/api/v1/projects", {
+    params: {
+      header: {
+        // The caller holds the key across retries of one create intent, so a
+        // resubmission replays instead of duplicating (ADR-0008).
+        "Idempotency-Key": idempotencyKey,
+      },
     },
     body: {
       title,
@@ -78,19 +101,17 @@ export async function createProject(formData: FormData): Promise<ActionResult<Pr
   if (error !== undefined) {
     return { ok: false, error: problemMessage(error) };
   }
-  void response;
-  return {
-    ok: true,
-    value: {
-      id: data.id,
-      title: data.title,
-      description: data.description,
-      language: data.language,
-      status: data.status,
-      createdAt: data.created_at,
-      updatedAt: data.updated_at,
-    },
-  };
+  return { ok: true, value: toProjectView(data) };
+}
+
+export async function getProject(projectId: string): Promise<ActionResult<ProjectView>> {
+  const { data, error } = await apiClient.GET("/api/v1/projects/{project_id}", {
+    params: { path: { project_id: projectId } },
+  });
+  if (error !== undefined) {
+    return { ok: false, error: problemMessage(error) };
+  }
+  return { ok: true, value: toProjectView(data) };
 }
 
 export async function archiveProject(projectId: string): Promise<ActionResult<ProjectView>> {
@@ -111,16 +132,5 @@ export async function archiveProject(projectId: string): Promise<ActionResult<Pr
   if (error !== undefined) {
     return { ok: false, error: problemMessage(error) };
   }
-  return {
-    ok: true,
-    value: {
-      id: data.id,
-      title: data.title,
-      description: data.description,
-      language: data.language,
-      status: data.status,
-      createdAt: data.created_at,
-      updatedAt: data.updated_at,
-    },
-  };
+  return { ok: true, value: toProjectView(data) };
 }

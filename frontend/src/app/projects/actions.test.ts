@@ -6,7 +6,7 @@ vi.mock("../../lib/api/client", () => ({
   apiClient: { GET: get, POST: post },
 }));
 
-import { archiveProject, createProject, listProjects } from "./actions";
+import { archiveProject, createProject, getProject, listProjects } from "./actions";
 
 const PROJECT = {
   id: "0199e0a2-0000-7000-8000-000000000001",
@@ -24,33 +24,33 @@ beforeEach(() => {
 });
 
 describe("createProject(创建项目)", () => {
-  it("携带 Idempotency-Key 并返回项目视图", async () => {
-    post.mockResolvedValueOnce({ data: PROJECT, error: undefined });
+  it("使用调用方持有的 Idempotency-Key,重试复用同一键", async () => {
+    post.mockResolvedValue({ data: PROJECT, error: undefined });
 
     const formData = new FormData();
     formData.set("title", "长夜灯");
     formData.set("description", "一部志怪长篇");
 
-    const result = await createProject(formData);
+    const first = await createProject(formData, "intent-key-1");
+    const retry = await createProject(formData, "intent-key-1");
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.title).toBe("长夜灯");
-      expect(result.value.status).toBe("active");
+    expect(first.ok).toBe(true);
+    expect(retry.ok).toBe(true);
+    expect(post).toHaveBeenCalledTimes(2);
+    for (const [path, init] of post.mock.calls) {
+      expect(path).toBe("/api/v1/projects");
+      expect(init.params.header["Idempotency-Key"]).toBe("intent-key-1");
+      expect(init.body).toEqual({ title: "长夜灯", description: "一部志怪长篇", language: "zh-Hans" });
     }
-    const [path, init] = post.mock.calls[0];
-    expect(path).toBe("/api/v1/projects");
-    expect(init.headers["Idempotency-Key"]).toEqual(expect.any(String));
-    expect(init.body).toEqual({ title: "长夜灯", description: "一部志怪长篇", language: "zh-Hans" });
   });
 
   it("把稳定错误码映射为中文提示", async () => {
-    post.mockResolvedValueOnce({
+    post.mockResolvedValue({
       data: undefined,
       error: { code: "idempotency_key_conflict", detail: "payload differs" },
     });
 
-    const result = await createProject(new FormData());
+    const result = await createProject(new FormData(), "intent-key-2");
 
     expect(result).toEqual({
       ok: false,
@@ -94,27 +94,40 @@ describe("archiveProject(归档项目)", () => {
 });
 
 describe("listProjects(项目列表)", () => {
-  it("映射分页负载", async () => {
-    get.mockResolvedValueOnce({
-      data: { items: [PROJECT], next_cursor: null },
-      error: undefined,
-    });
+  it("跟随 next_cursor 翻页,不静默截断", async () => {
+    const pageOne = { ...PROJECT, id: "p1" };
+    const pageTwo = { ...PROJECT, id: "p2", title: "第二页之书" };
+    get
+      .mockResolvedValueOnce({
+        data: { items: [pageOne], next_cursor: "cursor-1" },
+        error: undefined,
+      })
+      .mockResolvedValueOnce({
+        data: { items: [pageTwo], next_cursor: null },
+        error: undefined,
+      });
 
     const result = await listProjects();
 
-    expect(result).toEqual({
-      ok: true,
-      value: [
-        {
-          id: PROJECT.id,
-          title: PROJECT.title,
-          description: null,
-          language: "zh-Hans",
-          status: "active",
-          createdAt: PROJECT.created_at,
-          updatedAt: PROJECT.updated_at,
-        },
-      ],
-    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.map((project) => project.id)).toEqual(["p1", "p2"]);
+    }
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get.mock.calls[0][1].params.query).toEqual({ limit: 100 });
+    expect(get.mock.calls[1][1].params.query).toEqual({ limit: 100, cursor: "cursor-1" });
+  });
+});
+
+describe("getProject(打开项目)", () => {
+  it("返回项目视图", async () => {
+    get.mockResolvedValueOnce({ data: PROJECT, error: undefined, response: {} });
+
+    const result = await getProject(PROJECT.id);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.title).toBe("长夜灯");
+    }
   });
 });

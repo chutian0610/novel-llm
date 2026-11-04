@@ -16,10 +16,24 @@ from collections.abc import Awaitable, Callable
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from novel_llm.domain.errors import DomainError
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
+
+
+class Problem(BaseModel):
+    """RFC 9457 problem-details body with a stable ``code`` (ADR-0008).
+
+    Declared in route ``responses=`` so the generated typed client models the
+    error surface instead of discovering it at runtime."""
+
+    type: str
+    title: str
+    status: int
+    code: str
+    detail: str | None = None
 
 
 class ProblemError(Exception):

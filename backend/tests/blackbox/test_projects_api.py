@@ -61,9 +61,13 @@ async def test_same_idempotency_key_with_different_payload_conflicts(client: htt
 
 
 async def test_create_without_idempotency_key_is_rejected(client: httpx.AsyncClient):
+    # The contract declares Idempotency-Key required (ADR-0008): the missing
+    # header fails request validation as a 400 problem.
     response = await client.post("/api/v1/projects", json={"title": "无键之书"})
     assert response.status_code == 400
-    assert response.json()["code"] == "missing_idempotency_key"
+    body = response.json()
+    assert body["code"] == "validation_error"
+    assert response.headers["content-type"] == "application/problem+json"
 
 
 async def test_get_project_returns_resource_with_matching_etag(client: httpx.AsyncClient):

@@ -59,23 +59,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/projects/{project_id}/archive": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Archive Project */
-        post: operations["archive_project_api_v1_projects__project_id__archive_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/projects/{project_id}": {
         parameters: {
             query?: never;
@@ -92,6 +75,23 @@ export interface paths {
         head?: never;
         /** Update Project */
         patch: operations["update_project_api_v1_projects__project_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Project */
+        post: operations["archive_project_api_v1_projects__project_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1": {
@@ -156,6 +156,25 @@ export interface components {
         HealthResponse: {
             /** Status */
             status: string;
+        };
+        /**
+         * Problem
+         * @description RFC 9457 problem-details body with a stable ``code`` (ADR-0008).
+         *
+         *     Declared in route ``responses=`` so the generated typed client models the
+         *     error surface instead of discovering it at runtime.
+         */
+        Problem: {
+            /** Type */
+            type: string;
+            /** Title */
+            title: string;
+            /** Status */
+            status: number;
+            /** Code */
+            code: string;
+            /** Detail */
+            detail?: string | null;
         };
         /** ProjectListResource */
         ProjectListResource: {
@@ -292,6 +311,15 @@ export interface operations {
                     "application/json": components["schemas"]["ProjectListResource"];
                 };
             };
+            /** @description Malformed cursor or query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -306,8 +334,8 @@ export interface operations {
     create_project_api_v1_projects_post: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string | null;
+            header: {
+                "Idempotency-Key": string;
             };
             path?: never;
             cookie?: never;
@@ -318,6 +346,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description Idempotent replay: the original Project, not a duplicate */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResource"];
+                };
+            };
             /** @description Successful Response */
             201: {
                 headers: {
@@ -327,37 +364,22 @@ export interface operations {
                     "application/json": components["schemas"]["ProjectResource"];
                 };
             };
-            /** @description Validation Error */
-            422: {
+            /** @description Missing or invalid Idempotency-Key */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["Problem"];
                 };
             };
-        };
-    };
-    archive_project_api_v1_projects__project_id__archive_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "If-Match"?: string | null;
-            };
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
+            /** @description Idempotency key reused with a different payload */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ProjectResource"];
+                    "application/json": components["schemas"]["Problem"];
                 };
             };
             /** @description Validation Error */
@@ -389,6 +411,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectResource"];
+                };
+            };
+            /** @description Malformed project id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Project not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
                 };
             };
             /** @description Validation Error */
@@ -428,6 +468,42 @@ export interface operations {
                     "application/json": components["schemas"]["ProjectResource"];
                 };
             };
+            /** @description Malformed request or If-Match header */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Project not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Domain rule refused the change */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description If-Match ETag does not match the current version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -435,6 +511,93 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description If-Match header is required to change a mutable object */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    archive_project_api_v1_projects__project_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResource"];
+                };
+            };
+            /** @description Malformed request or If-Match header */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Project not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Domain rule refused the change */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description If-Match ETag does not match the current version */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description If-Match header is required to change a mutable object */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
                 };
             };
         };
