@@ -1,4 +1,5 @@
 import { apiClient } from "../lib/api/client";
+import { ProjectPanel } from "./projects/project-panel";
 import { ServiceStatus } from "./service-status";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +29,7 @@ export default async function Home() {
       <h1>Novel LLM 工作台</h1>
       <p>单作者长篇小说创作工作台 · 仅监听 127.0.0.1</p>
       <ServiceStatus health={health} apiRoot={apiRoot} error={error} />
+      <ProjectPanel />
     </main>
   );
 }
