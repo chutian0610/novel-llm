@@ -9,3 +9,10 @@ path = "/var/lib/novel-llm/storage"
 
 [log]
 level = "INFO"
+
+[worker]
+# Jobs for the same Project are serialized in the database regardless of this
+# number (ADR-0003); concurrency itself defaults to one.
+concurrency = 1
+poll_seconds = 0.5
+graceful_timeout_seconds = 10.0

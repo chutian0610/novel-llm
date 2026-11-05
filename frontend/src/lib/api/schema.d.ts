@@ -128,6 +128,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/workflow-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Workflow Runs */
+        get: operations["list_workflow_runs_api_v1_projects__project_id__workflow_runs_get"];
+        put?: never;
+        /** Create Workflow Run */
+        post: operations["create_workflow_run_api_v1_projects__project_id__workflow_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflow-runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Workflow Run */
+        get: operations["get_workflow_run_api_v1_workflow_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Job */
+        get: operations["get_job_api_v1_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1": {
         parameters: {
             query?: never;
@@ -156,6 +208,24 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** AttemptResource */
+        AttemptResource: {
+            /** Attempt */
+            attempt: number;
+            /** Worker Id */
+            worker_id: string;
+            /** Outcome */
+            outcome: string | null;
+            /** Failure Class */
+            failure_class: string | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Finished At */
+            finished_at: string | null;
+        };
         /** CheckStatus */
         CheckStatus: {
             /**
@@ -169,6 +239,22 @@ export interface components {
              */
             detail: string;
         };
+        /** CheckpointResource */
+        CheckpointResource: {
+            /** Checkpoint Key */
+            checkpoint_key: string;
+            /** Attempt */
+            attempt: number;
+            /** State */
+            state: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** CreateProjectRequest */
         CreateProjectRequest: {
             /** Title */
@@ -180,6 +266,15 @@ export interface components {
              * @default zh-Hans
              */
             language: string;
+        };
+        /** CreateWorkflowRunRequest */
+        CreateWorkflowRunRequest: {
+            /** Definition Key */
+            definition_key: string;
+            /** Payload */
+            payload?: {
+                [key: string]: unknown;
+            };
         };
         /** EventEnvelopeResource */
         EventEnvelopeResource: {
@@ -217,6 +312,56 @@ export interface components {
         HealthResponse: {
             /** Status */
             status: string;
+        };
+        /** JobResource */
+        JobResource: {
+            /** Id */
+            id: string;
+            /** Project Id */
+            project_id: string;
+            /** Workflow Run Id */
+            workflow_run_id: string;
+            /** Job Type */
+            job_type: string;
+            /** Status */
+            status: string;
+            /** Attempt */
+            attempt: number;
+            /** Failure Class */
+            failure_class: string | null;
+            /** Last Error */
+            last_error: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Completed At */
+            completed_at: string | null;
+            /** Attempts */
+            attempts: components["schemas"]["AttemptResource"][];
+            /** Steps */
+            steps: components["schemas"]["StepResource"][];
+            /** Checkpoints */
+            checkpoints: components["schemas"]["CheckpointResource"][];
+        };
+        /** JobSummaryResource */
+        JobSummaryResource: {
+            /** Id */
+            id: string;
+            /** Job Type */
+            job_type: string;
+            /** Status */
+            status: string;
+            /** Attempt */
+            attempt: number;
+            /** Failure Class */
+            failure_class: string | null;
         };
         /**
          * Problem
@@ -279,6 +424,26 @@ export interface components {
                 [key: string]: components["schemas"]["CheckStatus"];
             };
         };
+        /** StepResource */
+        StepResource: {
+            /** Step Key */
+            step_key: string;
+            /** Status */
+            status: string;
+            /** Attempt */
+            attempt: number;
+            /** Result */
+            result: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Finished At */
+            finished_at: string | null;
+        };
         /** UpdateProjectRequest */
         UpdateProjectRequest: {
             /** Title */
@@ -300,6 +465,73 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** WorkflowRunDetailResource */
+        WorkflowRunDetailResource: {
+            /** Id */
+            id: string;
+            /** Project Id */
+            project_id: string;
+            /** Definition Key */
+            definition_key: string;
+            /** Definition Version */
+            definition_version: number;
+            /** Payload Schema Version */
+            payload_schema_version: number;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Status */
+            status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Jobs */
+            jobs: components["schemas"]["JobSummaryResource"][];
+        };
+        /** WorkflowRunListResource */
+        WorkflowRunListResource: {
+            /** Items */
+            items: components["schemas"]["WorkflowRunResource"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** WorkflowRunResource */
+        WorkflowRunResource: {
+            /** Id */
+            id: string;
+            /** Project Id */
+            project_id: string;
+            /** Definition Key */
+            definition_key: string;
+            /** Definition Version */
+            definition_version: number;
+            /** Payload Schema Version */
+            payload_schema_version: number;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Status */
+            status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
     };
     responses: never;
@@ -747,6 +979,229 @@ export interface operations {
                 };
             };
             /** @description Project not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_workflow_runs_api_v1_projects__project_id__workflow_runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRunListResource"];
+                };
+            };
+            /** @description Malformed cursor or query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Project not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_workflow_run_api_v1_projects__project_id__workflow_runs_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateWorkflowRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Idempotent replay: the original Workflow Run, not a duplicate */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRunResource"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRunResource"];
+                };
+            };
+            /** @description Missing/invalid Idempotency-Key, unknown Workflow Definition, or payload schema violation */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Project not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Project archived or Idempotency-Key reused with a different payload */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_workflow_run_api_v1_workflow_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRunDetailResource"];
+                };
+            };
+            /** @description Malformed run id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Workflow Run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_job_api_v1_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobResource"];
+                };
+            };
+            /** @description Malformed job id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Job not found */
             404: {
                 headers: {
                     [name: string]: unknown;

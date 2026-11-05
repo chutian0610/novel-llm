@@ -14,13 +14,12 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from novel_llm.api.dependencies import get_db_session
+from novel_llm.api.headers import check_idempotency_key
 from novel_llm.api.problems import Problem, ProblemError
 from novel_llm.domain import projects
 from novel_llm.domain.projects import Project, ProjectChanges, Unset
 
 router = APIRouter(tags=["projects"])
-
-_IDEMPOTENCY_KEY_MAX_LENGTH = 200
 
 _CONCURRENCY_PROBLEMS: dict[int | str, dict[str, Any]] = {
     400: {"model": Problem, "description": "Malformed request or If-Match header"},
@@ -64,17 +63,6 @@ def _set_etag(response: Response, project: Project) -> None:
     response.headers["ETag"] = projects.project_etag(project)
 
 
-def _check_idempotency_key(key: str) -> str:
-    key = key.strip()
-    if len(key) > _IDEMPOTENCY_KEY_MAX_LENGTH:
-        raise ProblemError(
-            status=400,
-            code="invalid_idempotency_key",
-            title="Idempotency-Key header is too long",
-        )
-    return key
-
-
 @router.post(
     "/projects",
     status_code=201,
@@ -92,15 +80,14 @@ async def create_project(
     payload: CreateProjectRequest,
     response: Response,
     session: Annotated[AsyncSession, Depends(get_db_session)],
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: Annotated[str, Depends(check_idempotency_key)],
 ) -> ProjectResource:
-    key = _check_idempotency_key(idempotency_key)
     project, created = await projects.create_project(
         session,
         title=payload.title,
         description=payload.description,
         language=payload.language,
-        idempotency_key=key,
+        idempotency_key=idempotency_key,
     )
     if not created:
         # A replayed create returns the original Project (200), not a duplicate.

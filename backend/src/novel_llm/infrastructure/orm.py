@@ -7,7 +7,18 @@ convention so constraint names match the hand-written Alembic migrations.
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, MetaData, Text, text
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    Index,
+    Integer,
+    MetaData,
+    Numeric,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB as PgJSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -75,5 +86,222 @@ class DomainEventRow(Base):
     event_type: Mapped[str] = mapped_column(Text())
     payload: Mapped[dict] = mapped_column(PgJSONB())
     occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class WorkflowRunRow(Base):
+    """One execution of a code-owned Workflow Definition (ADR-0003): the row
+    binds the definition key, definition version, and payload schema version
+    that created it, so code upgrades affect only new runs. Status is the
+    business-facing subset of the Job states."""
+
+    __tablename__ = "workflow_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled')",
+            name="status",
+        ),
+        CheckConstraint("btrim(definition_key) <> ''", name="definition_key_not_blank"),
+        Index("ix_workflow_runs_project_id_id", "project_id", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    definition_key: Mapped[str] = mapped_column(Text())
+    definition_version: Mapped[int] = mapped_column(Integer())
+    payload_schema_version: Mapped[int] = mapped_column(Integer())
+    payload: Mapped[dict] = mapped_column(PgJSONB())
+    status: Mapped[str] = mapped_column(Text(), server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class WorkflowRunIdempotencyKeyRow(Base):
+    """A create-attempt key for a Workflow Run; the unique key is what
+    PostgreSQL enforces, the fingerprint detects reuse with a different
+    payload."""
+
+    __tablename__ = "workflow_run_idempotency_keys"
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    key: Mapped[str] = mapped_column(Text(), unique=True)
+    request_fingerprint: Mapped[str] = mapped_column(Text())
+    run_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class JobTypeRow(Base):
+    """Database-owned per-Job-Type runtime settings (ADR-0003): timeout,
+    heartbeat, lease, retry, and backoff live here, not in code, so the retry
+    policy is observable and tunable without a deploy."""
+
+    __tablename__ = "job_types"
+    __table_args__ = (
+        CheckConstraint("timeout_seconds > 0", name="timeout_positive"),
+        CheckConstraint("heartbeat_seconds > 0", name="heartbeat_positive"),
+        CheckConstraint("lease_seconds > 0", name="lease_positive"),
+        CheckConstraint("max_attempts >= 1", name="max_attempts_at_least_one"),
+        CheckConstraint("backoff_seconds >= 0", name="backoff_non_negative"),
+        CheckConstraint("backoff_multiplier >= 1.0", name="backoff_multiplier_at_least_one"),
+        CheckConstraint("backoff_max_seconds > 0", name="backoff_max_positive"),
+        CheckConstraint("btrim(job_type) <> ''", name="job_type_not_blank"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    job_type: Mapped[str] = mapped_column(Text(), unique=True)
+    timeout_seconds: Mapped[int] = mapped_column(Integer())
+    heartbeat_seconds: Mapped[int] = mapped_column(Integer())
+    lease_seconds: Mapped[int] = mapped_column(Integer())
+    max_attempts: Mapped[int] = mapped_column(Integer())
+    backoff_seconds: Mapped[int] = mapped_column(Integer())
+    backoff_multiplier: Mapped[float] = mapped_column(Numeric())
+    backoff_max_seconds: Mapped[int] = mapped_column(Integer())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class JobRow(Base):
+    """A persistently queued unit of work (ADR-0003): claimed transactionally,
+    held under a lease with heartbeats, executed through attempts. The
+    fencing token is monotonic per claim; checkpoint and step writes must
+    carry it. Status is the closed set from the spec, enforced here."""
+
+    __tablename__ = "jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ("
+            "'ready', 'leased', 'running', 'pause_requested', 'paused', "
+            "'cancel_requested', 'cancelling', 'interrupted', "
+            "'succeeded', 'failed', 'cancelled', 'skipped')",
+            name="status",
+        ),
+        CheckConstraint(
+            "failure_class IS NULL OR failure_class IN ("
+            "'transient', 'permanent', 'cancelled', 'timeout', "
+            "'quota_exhausted', 'upstream_invalid')",
+            name="failure_class",
+        ),
+        CheckConstraint("btrim(job_type) <> ''", name="job_type_not_blank"),
+        Index("ix_jobs_status_created_at", "status", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), index=True)
+    workflow_run_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), index=True)
+    job_type: Mapped[str] = mapped_column(Text())
+    payload: Mapped[dict] = mapped_column(PgJSONB())
+    status: Mapped[str] = mapped_column(Text(), server_default="ready")
+    # Attempt and fencing token both advance on every claim; the token is
+    # what checkpoint and step writes must present (ADR-0003).
+    attempt: Mapped[int] = mapped_column(Integer(), server_default="0")
+    fencing_token: Mapped[int] = mapped_column(BigInteger(), server_default="0")
+    # Earliest claim time (backoff scheduling); NULL means due now.
+    run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    leased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_class: Mapped[str | None] = mapped_column(Text())
+    last_error: Mapped[str | None] = mapped_column(Text())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class JobAttemptRow(Base):
+    """One claim-and-execute of a Job. Terminal job states are immutable, so
+    history grows here instead of being rewritten: recovery creates a new
+    attempt row, never a reopened one."""
+
+    __tablename__ = "job_attempts"
+    __table_args__ = (
+        UniqueConstraint("job_id", "attempt", name="uq_job_attempts_job_id_attempt"),
+        CheckConstraint(
+            "outcome IS NULL OR outcome IN ("
+            "'succeeded', 'failed', 'cancelled', 'abandoned', 'interrupted')",
+            name="outcome",
+        ),
+        CheckConstraint(
+            "failure_class IS NULL OR failure_class IN ("
+            "'transient', 'permanent', 'cancelled', 'timeout', "
+            "'quota_exhausted', 'upstream_invalid')",
+            name="failure_class",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    job_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), index=True)
+    attempt: Mapped[int] = mapped_column(Integer())
+    fencing_token: Mapped[int] = mapped_column(BigInteger())
+    worker_id: Mapped[str] = mapped_column(Text())
+    outcome: Mapped[str | None] = mapped_column(Text())
+    failure_class: Mapped[str | None] = mapped_column(Text())
+    detail: Mapped[dict | None] = mapped_column(PgJSONB())
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class JobStepRow(Base):
+    """One step of a Job. The (job_id, step_key) pair is the stable
+    idempotency key PostgreSQL enforces: replaying a step finds the recorded
+    outcome instead of duplicating its effect."""
+
+    __tablename__ = "job_steps"
+    __table_args__ = (
+        UniqueConstraint("job_id", "step_key", name="uq_job_steps_job_id_step_key"),
+        CheckConstraint("status IN ('started', 'succeeded', 'failed')", name="status"),
+        CheckConstraint("btrim(step_key) <> ''", name="step_key_not_blank"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    job_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    step_key: Mapped[str] = mapped_column(Text())
+    status: Mapped[str] = mapped_column(Text(), server_default="started")
+    attempt: Mapped[int] = mapped_column(Integer())
+    fencing_token: Mapped[int] = mapped_column(BigInteger())
+    result: Mapped[dict | None] = mapped_column(PgJSONB())
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class JobCheckpointRow(Base):
+    """A resumable position recorded inside a Job attempt. Writes carry the
+    attempt's fencing token, so a stale Worker cannot overwrite a newer
+    attempt's results (ADR-0003). Append-only."""
+
+    __tablename__ = "job_checkpoints"
+    __table_args__ = (
+        CheckConstraint("btrim(checkpoint_key) <> ''", name="checkpoint_key_not_blank"),
+        Index("ix_job_checkpoints_job_id_id", "job_id", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    job_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    attempt: Mapped[int] = mapped_column(Integer())
+    fencing_token: Mapped[int] = mapped_column(BigInteger())
+    checkpoint_key: Mapped[str] = mapped_column(Text())
+    state: Mapped[dict] = mapped_column(PgJSONB())
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )

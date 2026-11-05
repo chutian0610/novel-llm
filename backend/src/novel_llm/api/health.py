@@ -5,9 +5,8 @@ Readiness checks three components:
 - migrations: the schema history is applied up to the code-owned head
 - queue:      the transactional claim primitive (FOR UPDATE SKIP LOCKED) works
 
-The queue check probes the claim primitive on the schema-history table until
-the jobs tables exist; the Job runtime ticket replaces it with a probe over
-the real queue.
+The queue check probes the claim primitive over the real jobs table — the
+same locking the Worker's claim transaction uses (ADR-0003).
 """
 
 from typing import Annotated, Literal
@@ -96,11 +95,8 @@ async def _check_queue_claim_primitive(engine) -> CheckStatus:
     try:
         async with engine.begin() as connection:
             await connection.execute(
-                sa.text("SELECT version_num FROM alembic_version FOR UPDATE SKIP LOCKED")
+                sa.text("SELECT id FROM jobs ORDER BY id DESC LIMIT 1 FOR UPDATE SKIP LOCKED")
             )
-        return CheckStatus(
-            status="ok",
-            detail="claim primitive probe; the jobs table arrives with the Job runtime ticket",
-        )
+        return CheckStatus(status="ok", detail="claim primitive probe over the jobs table")
     except Exception as error:
         return CheckStatus(status="error", detail=f"claim primitive failed: {error}")

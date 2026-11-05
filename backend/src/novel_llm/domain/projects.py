@@ -7,20 +7,16 @@ physical foreign keys to rely on).
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from hashlib import sha256
-from json import dumps
 from typing import Any, NoReturn
 from uuid import UUID
 
 from sqlalchemy import and_, insert, or_, select, update
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from novel_llm.domain import events
+from novel_llm.domain import events, idempotency
 from novel_llm.domain.cursor import decode_cursor, encode_cursor
 from novel_llm.domain.errors import (
     ConcurrencyConflict,
-    IdempotencyKeyConflict,
     ProjectArchived,
     ProjectNotFound,
 )
@@ -58,13 +54,9 @@ def _to_project(row: ProjectRow) -> Project:
 
 def request_fingerprint(title: str, description: str | None, language: str) -> str:
     """A stable digest of the create payload; idempotent replay must match it."""
-    canonical = dumps(
-        {"title": title, "description": description, "language": language},
-        sort_keys=True,
-        ensure_ascii=False,
-        separators=(",", ":"),
+    return idempotency.request_fingerprint(
+        {"title": title, "description": description, "language": language}
     )
-    return sha256(canonical.encode("utf-8")).hexdigest()
 
 
 async def create_project(
@@ -78,40 +70,21 @@ async def create_project(
     """Create a Project, honoring the idempotency key: a retried create with
     the same key and payload returns the original Project, never a duplicate.
 
-    Returns the Project and whether this call created it. The key's uniqueness
-    is enforced by PostgreSQL (unique constraint); the fingerprint detects
-    reuse of a key with a different payload."""
+    Returns the Project and whether this call created it."""
     fingerprint = request_fingerprint(title, description, language)
     now = datetime.now(UTC)
     project_id = new_id()
 
-    try:
-        await session.execute(
-            insert(ProjectIdempotencyKeyRow).values(
-                id=new_id(),
-                key=idempotency_key,
-                request_fingerprint=fingerprint,
-                project_id=project_id,
-                created_at=now,
-            )
-        )
-    except IntegrityError:
-        # The key exists: either a replay of the same create, or a conflict.
-        # After the rollback, READ COMMITTED sees a concurrent creator's
-        # committed key row, so the retry is decided on committed state.
-        await session.rollback()
-        key_row = (
-            await session.execute(
-                select(ProjectIdempotencyKeyRow).where(
-                    ProjectIdempotencyKeyRow.key == idempotency_key
-                )
-            )
-        ).scalar_one()
-        if key_row.request_fingerprint != fingerprint:
-            raise IdempotencyKeyConflict(
-                "the Idempotency-Key was already used with a different request payload"
-            ) from None
-        existing = await session.get_one(ProjectRow, key_row.project_id)
+    existing_id = await idempotency.begin_create(
+        session,
+        ProjectIdempotencyKeyRow,
+        key=idempotency_key,
+        fingerprint=fingerprint,
+        resource_id=project_id,
+        resource_ref_column="project_id",
+    )
+    if existing_id is not None:
+        existing = await session.get_one(ProjectRow, existing_id)
         return _to_project(existing), False
 
     result = await session.execute(
