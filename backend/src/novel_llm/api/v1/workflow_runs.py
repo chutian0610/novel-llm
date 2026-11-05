@@ -7,12 +7,13 @@ from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Response
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from novel_llm.api.dependencies import get_db_session
-from novel_llm.api.problems import Problem, ProblemError
+from novel_llm.api.headers import check_idempotency_key
+from novel_llm.api.problems import Problem
 from novel_llm.domain import jobs as jobs_domain
 from novel_llm.domain import projects, workflow_runs
 from novel_llm.domain.cursor import encode_cursor
@@ -20,7 +21,6 @@ from novel_llm.infrastructure.orm import WorkflowRunRow
 
 router = APIRouter(tags=["workflow-runs"])
 
-_IDEMPOTENCY_KEY_MAX_LENGTH = 200
 _LIST_LIMIT = 100
 
 
@@ -92,17 +92,6 @@ def _resource(row: WorkflowRunRow) -> WorkflowRunResource:
     )
 
 
-def _check_idempotency_key(key: str) -> str:
-    key = key.strip()
-    if not key or len(key) > _IDEMPOTENCY_KEY_MAX_LENGTH:
-        raise ProblemError(
-            status=400,
-            code="invalid_idempotency_key",
-            title="Idempotency-Key header is empty or too long",
-        )
-    return key
-
-
 @router.post(
     "/projects/{project_id}/workflow-runs",
     status_code=201,
@@ -114,15 +103,14 @@ async def create_workflow_run(
     payload: CreateWorkflowRunRequest,
     response: Response,
     session: Annotated[AsyncSession, Depends(get_db_session)],
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    idempotency_key: Annotated[str, Depends(check_idempotency_key)],
 ) -> WorkflowRunResource:
-    key = _check_idempotency_key(idempotency_key)
     run, created = await workflow_runs.create_workflow_run(
         session,
         project_id=project_id,
         definition_key=payload.definition_key,
         payload=payload.payload,
-        idempotency_key=key,
+        idempotency_key=idempotency_key,
     )
     if not created:
         # A replayed create returns the original run (200), not a duplicate.

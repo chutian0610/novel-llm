@@ -111,16 +111,6 @@ async def job_type_settings(session: AsyncSession, job_type: str) -> JobTypeSett
     )
 
 
-def _job_event_payload(row: JobRow, from_status: str, to_status: str) -> dict[str, Any]:
-    return {
-        "job_id": str(row.id),
-        "workflow_run_id": str(row.workflow_run_id),
-        "from": from_status,
-        "to": to_status,
-        "attempt": row.attempt,
-    }
-
-
 def _stage_job_event(
     session: AsyncSession, row: JobRow, *, from_status: str, to_status: str, attempt: int
 ) -> None:
@@ -159,7 +149,11 @@ async def claim_next_job(session: AsyncSession, *, worker_id: str) -> ActiveJob 
             await session.execute(
                 select(JobRow.id)
                 .where(
+                    # ready honors run_at, the database-owned backoff: a
+                    # transient retry is not claimable before its backoff
+                    # delay has passed
                     (JobRow.status == "ready")
+                    & ((JobRow.run_at.is_(None)) | (JobRow.run_at <= now))
                     # interrupted Jobs are recoverable by definition: their
                     # Worker is gone (lease expired or a forced exit)
                     | (JobRow.status == "interrupted")
@@ -425,8 +419,19 @@ async def complete_step(
     fencing_token: int,
     result: dict[str, Any],
 ) -> None:
-    """Record a step's committed effect, fenced by the attempt's token."""
+    """Record a step's committed effect, fenced by the attempt's token.
+
+    The Job row is locked first — the same order as :func:`begin_step` — so a
+    stale attempt finishing concurrently with a takeover can never deadlock
+    with the newer attempt's writes."""
     now = _now()
+    current_token = (
+        await session.execute(
+            select(JobRow.fencing_token).where(JobRow.id == job_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if current_token != fencing_token:
+        raise LeaseLost(f"job {job_id} is owned by a newer attempt")
     step = (
         await session.execute(
             select(JobStepRow)
@@ -437,13 +442,6 @@ async def complete_step(
     if step is None:
         await session.rollback()
         raise LeaseLost(f"step {step_key!r} of job {job_id} was never begun")
-    current_token = (
-        await session.execute(
-            select(JobRow.fencing_token).where(JobRow.id == job_id).with_for_update()
-        )
-    ).scalar_one_or_none()
-    if current_token != fencing_token:
-        raise LeaseLost(f"job {job_id} is owned by a newer attempt")
     step.status = "succeeded"
     step.attempt = attempt
     step.fencing_token = fencing_token

@@ -7,21 +7,17 @@ mapping, validated by the run state machine with the database authoritative.
 """
 
 from datetime import UTC, datetime
-from hashlib import sha256
-from json import dumps
 from typing import Any
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import and_, insert, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from statemachine.exceptions import TransitionNotAllowed as MachineTransitionNotAllowed
 
-from novel_llm.domain import events, projects
+from novel_llm.domain import events, idempotency, projects
 from novel_llm.domain.cursor import decode_cursor
 from novel_llm.domain.errors import (
-    IdempotencyKeyConflict,
     InvalidWorkflowPayload,
     ProjectArchived,
     UnknownWorkflowDefinition,
@@ -50,13 +46,7 @@ def _run_event_payload(
 
 def request_fingerprint(definition_key: str, payload: dict[str, Any]) -> str:
     """A stable digest of the create payload; idempotent replay must match it."""
-    canonical = dumps(
-        {"definition_key": definition_key, "payload": payload},
-        sort_keys=True,
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return sha256(canonical.encode("utf-8")).hexdigest()
+    return idempotency.request_fingerprint({"definition_key": definition_key, "payload": payload})
 
 
 async def create_workflow_run(
@@ -93,30 +83,16 @@ async def create_workflow_run(
     now = datetime.now(UTC)
     run_id = new_id()
 
-    try:
-        await session.execute(
-            insert(WorkflowRunIdempotencyKeyRow).values(
-                id=new_id(),
-                key=idempotency_key,
-                request_fingerprint=fingerprint,
-                run_id=run_id,
-                created_at=now,
-            )
-        )
-    except IntegrityError:
-        await session.rollback()
-        key_row = (
-            await session.execute(
-                select(WorkflowRunIdempotencyKeyRow).where(
-                    WorkflowRunIdempotencyKeyRow.key == idempotency_key
-                )
-            )
-        ).scalar_one()
-        if key_row.request_fingerprint != fingerprint:
-            raise IdempotencyKeyConflict(
-                "the Idempotency-Key was already used with a different request payload"
-            ) from None
-        existing = await session.get_one(WorkflowRunRow, key_row.run_id)
+    existing_id = await idempotency.begin_create(
+        session,
+        WorkflowRunIdempotencyKeyRow,
+        key=idempotency_key,
+        fingerprint=fingerprint,
+        resource_id=run_id,
+        resource_ref_column="run_id",
+    )
+    if existing_id is not None:
+        existing = await session.get_one(WorkflowRunRow, existing_id)
         return existing, False
 
     row = WorkflowRunRow(
@@ -203,7 +179,13 @@ async def transition_run_for_job_event(
     definition's mapping. Unmapped job events (retries, interrupts) leave the
     run untouched; transitions the run state machine refuses (recovering a
     run that is already running) are skipped. The UPDATE carries the expected
-    status, so the database stays authoritative."""
+    status, so the database stays authoritative.
+
+    The mapping resolves the definition's current code (the registry holds
+    only the latest version). The run row still records the definition
+    version that created it, so history can be explained; while a single
+    version exists, mapping changes apply to new transitions of existing
+    runs — a per-version registry arrives with the first upgrade."""
     row = (
         await session.execute(
             select(WorkflowRunRow).where(WorkflowRunRow.id == run_id).with_for_update()

@@ -11,6 +11,7 @@ tables directly."""
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 
 import httpx
 import pytest
@@ -280,8 +281,13 @@ async def test_a_transient_failure_retries_under_the_database_owned_settings(
     assert [attempt["outcome"] for attempt in job["attempts"]] == ["failed", "succeeded"]
     assert job["failure_class"] == "transient"
     assert (await _get_run(client, run["id"]))["status"] == "succeeded"
-    # The retry waited out the database-owned initial backoff (1s).
-    assert job["attempts"][1]["started_at"] >= job["attempts"][0]["finished_at"]
+    # The retry waited out the database-owned initial backoff (1s): the gap
+    # between the failed attempt finishing and the retry starting must be at
+    # least the configured delay, not just the next poll.
+    retry_gap = datetime.fromisoformat(job["attempts"][1]["started_at"]) - datetime.fromisoformat(
+        job["attempts"][0]["finished_at"]
+    )
+    assert retry_gap.total_seconds() >= 1.0
     events = await _replay_events(client, project_id)
     assert _job_state_path(events, job_id) == [
         "ready",
@@ -422,3 +428,39 @@ async def test_shutdown_records_an_interrupted_checkpoint_and_recovers(
     assert steps["draft"]["attempt"] == 1  # replayed, not re-executed
     assert steps["polish"]["attempt"] == 2
     assert (await _get_run(client, run["id"]))["status"] == "succeeded"
+
+
+async def test_a_cancellation_request_is_honored_at_the_next_safe_checkpoint(
+    client: httpx.AsyncClient,
+    create_project: CreateProject,
+    start_worker: Callable[..., WorkerHandle],
+) -> None:
+    """The shutdown sequence's cooperative cancellation lands as a durable
+    control request; a handler that reaches its next safe checkpoint (the
+    boundary before a step) honors it, and the Job stops cancelled instead of
+    continuing its normal outcome."""
+    project_id = (await create_project())["id"]
+    # A slow-but-healthy Job: each step waits 1.5s, so the handler is between
+    # steps (a safe checkpoint) when the request lands.
+    run = await _create_run(client, project_id, _run_body(step_delay_ms=1500))
+    job_id = (await _get_run(client, run["id"]))["jobs"][0]["id"]
+
+    worker = start_worker(graceful_timeout_seconds=10.0)
+    await _wait_for_job_attempt(client, job_id, attempt=1)
+
+    worker.worker.stop()  # requests cooperative cancellation, waits gracefully
+    await asyncio.gather(worker.task, return_exceptions=True)
+
+    job = await _wait_for_job(client, job_id, "cancelled", timeout=30.0)
+    assert job["failure_class"] == "cancelled"
+    assert [attempt["outcome"] for attempt in job["attempts"]] == ["cancelled"]
+    assert (await _get_run(client, run["id"]))["status"] == "cancelled"
+    events = await _replay_events(client, project_id)
+    assert _job_state_path(events, job_id) == [
+        "ready",
+        "leased",
+        "running",
+        "cancel_requested",
+        "cancelling",
+        "cancelled",
+    ]
