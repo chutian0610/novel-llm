@@ -11,6 +11,7 @@ import {
   getProject,
   listProjects,
 } from "./actions";
+import { ProjectEventsPanel } from "./project-events-panel";
 
 function StatusBadge({ status }: { status: string }) {
   return (
@@ -22,16 +23,19 @@ function StatusBadge({ status }: { status: string }) {
 
 function ProjectDetail({ project }: { project: ProjectView }) {
   return (
-    <dl data-testid="project-detail">
-      <dt>描述</dt>
-      <dd>{project.description ?? "（无）"}</dd>
-      <dt>语言</dt>
-      <dd>{project.language}</dd>
-      <dt>创建于</dt>
-      <dd>{project.createdAt}</dd>
-      <dt>更新于</dt>
-      <dd>{project.updatedAt}</dd>
-    </dl>
+    <div data-testid="project-detail">
+      <dl>
+        <dt>描述</dt>
+        <dd>{project.description ?? "（无）"}</dd>
+        <dt>语言</dt>
+        <dd>{project.language}</dd>
+        <dt>创建于</dt>
+        <dd>{project.createdAt}</dd>
+        <dt>更新于</dt>
+        <dd>{project.updatedAt}</dd>
+      </dl>
+      <ProjectEventsPanel projectId={project.id} />
+    </div>
   );
 }
 

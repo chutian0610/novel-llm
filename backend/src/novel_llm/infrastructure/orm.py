@@ -8,6 +8,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import BigInteger, CheckConstraint, DateTime, MetaData, Text, text
+from sqlalchemy.dialects.postgresql import JSONB as PgJSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -59,5 +60,20 @@ class ProjectIdempotencyKeyRow(Base):
     request_fingerprint: Mapped[str] = mapped_column(Text())
     project_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), index=True)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class DomainEventRow(Base):
+    """One append-only outbox event, committed in the same transaction as the
+    domain change it describes. There is no update or delete path."""
+
+    __tablename__ = "domain_events"
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), index=True)
+    event_type: Mapped[str] = mapped_column(Text())
+    payload: Mapped[dict] = mapped_column(PgJSONB())
+    occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
