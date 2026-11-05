@@ -18,7 +18,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from novel_llm.domain.job_execution import JobCancelled, JobContext, TransientJobFailure
+from novel_llm.domain.job_execution import (
+    JobCancelled,
+    JobContext,
+    QuotaExhaustedFailure,
+    TransientJobFailure,
+    UpstreamInvalidFailure,
+)
 from novel_llm.workflows.definitions import WorkflowDefinition, register
 from novel_llm.workflows.handlers import register_handler
 
@@ -55,7 +61,9 @@ class TrivialRunPayload(BaseModel):
         ge=0,
         description="Inject the failure on this attempt only; 0 injects on every attempt.",
     )
-    failure_class: Literal["transient", "permanent"] = "transient"
+    failure_class: Literal["transient", "permanent", "quota_exhausted", "upstream_invalid"] = (
+        "transient"
+    )
     stall_after_step: str | None = Field(
         default=None,
         min_length=1,
@@ -63,6 +71,16 @@ class TrivialRunPayload(BaseModel):
         description=(
             "The step after which the handler stops making progress, "
             "simulating a deadlocked Worker."
+        ),
+    )
+    stall_before_checkpoint: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=50,
+        description=(
+            "The step whose progress checkpoint the handler stalls before: "
+            "the step's effect commits, the checkpoint stays pending, and the "
+            "Worker eventually wakes holding a late checkpoint write."
         ),
     )
     stall_on_attempt: int = Field(
@@ -83,9 +101,28 @@ class TrivialRunPayload(BaseModel):
         return stripped
 
 
+# The injected failure per failure_class, with the closed set's vocabulary
+# carrying into the error message the Job records.
+_INJECTED_FAILURES: dict[str, type[Exception]] = {
+    "transient": TransientJobFailure,
+    "permanent": RuntimeError,
+    "quota_exhausted": QuotaExhaustedFailure,
+    "upstream_invalid": UpstreamInvalidFailure,
+}
+
+
 async def run_trivial_job(ctx: JobContext) -> None:
     payload = TrivialRunPayload.model_validate(ctx.payload)
+    # Resume from the checkpoint (ADR-0003): the newest recorded progress
+    # names the steps already covered, so a recovery attempt starts after
+    # them instead of replaying history a checkpoint already covers. A step
+    # whose effect committed but whose checkpoint did not is still replayed
+    # through run_step, which returns the recorded result.
     steps_done: list[str] = []
+    for _checkpoint_key, state in reversed(await ctx.checkpoint_history()):
+        if "steps_done" in state:
+            steps_done = list(state["steps_done"])
+            break
 
     for step_key in payload.steps:
         if ctx.cancel_requested:
@@ -93,6 +130,8 @@ async def run_trivial_job(ctx: JobContext) -> None:
                 f"the cancellation request was honored at the safe checkpoint "
                 f"before step {step_key!r}"
             )
+        if step_key in steps_done:
+            continue
         if payload.step_delay_ms:
             await asyncio.sleep(payload.step_delay_ms / 1000)
 
@@ -102,13 +141,31 @@ async def run_trivial_job(ctx: JobContext) -> None:
                 ctx.attempt,
             )
             if injects:
-                if payload.failure_class == "transient":
-                    raise TransientJobFailure(f"injected transient failure at step {step_key!r}")
-                raise RuntimeError(f"injected permanent failure at step {step_key!r}")
+                failure = _INJECTED_FAILURES[payload.failure_class]
+                raise failure(
+                    f"injected {payload.failure_class.replace('_', ' ')} failure "
+                    f"at step {step_key!r}"
+                )
             return {"step": step_key, "attempt": ctx.attempt}
 
         await ctx.run_step(step_key, effect)
         steps_done.append(step_key)
+
+        # Stall between the step's committed effect and its progress
+        # checkpoint: the Worker holds a committed step whose checkpoint is
+        # still pending, so a stale attempt eventually wakes holding a late
+        # checkpoint write for a newer attempt's Job.
+        if (
+            step_key == payload.stall_before_checkpoint
+            and payload.stall_ms
+            and payload.stall_on_attempt in (0, ctx.attempt)
+        ):
+            await ctx.checkpoint(
+                f"stalled-before:{step_key}",
+                {"reason": "injected stall", "stall_ms": payload.stall_ms},
+            )
+            await asyncio.sleep(payload.stall_ms / 1000)
+
         await ctx.checkpoint(f"after:{step_key}", {"steps_done": list(steps_done)})
 
         if (

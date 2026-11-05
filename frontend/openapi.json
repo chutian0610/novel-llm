@@ -1038,6 +1038,10 @@
             "type": "integer",
             "title": "Attempt"
           },
+          "fencing_token": {
+            "type": "integer",
+            "title": "Fencing Token"
+          },
           "worker_id": {
             "type": "string",
             "title": "Worker Id"
@@ -1085,6 +1089,7 @@
         "type": "object",
         "required": [
           "attempt",
+          "fencing_token",
           "worker_id",
           "outcome",
           "failure_class",
@@ -1125,6 +1130,10 @@
             "type": "integer",
             "title": "Attempt"
           },
+          "fencing_token": {
+            "type": "integer",
+            "title": "Fencing Token"
+          },
           "state": {
             "additionalProperties": true,
             "type": "object",
@@ -1140,6 +1149,7 @@
         "required": [
           "checkpoint_key",
           "attempt",
+          "fencing_token",
           "state",
           "created_at"
         ],

@@ -3,6 +3,9 @@ the API and the real Worker loop: the trivial Workflow Run claims, runs, and
 completes a Job; leases and heartbeats prevent double execution; steps
 replay without duplicating effects; per-Project serialization holds; retries
 follow the database-owned settings; shutdown records interrupted checkpoints.
+Crash recovery is exercised one level blacker: the real Worker process is
+killed mid-job — SIGTERM for the graceful interrupted checkpoint, SIGKILL for
+the lease-expiry takeover — and a restarted process resumes the Job.
 
 Everything is observed through HTTP resources — job state, attempt history,
 step results, checkpoints, and the durable event feed — never by querying
@@ -10,19 +13,34 @@ tables directly."""
 
 import asyncio
 import json
+import signal
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 import httpx
 import pytest
 
-from tests.blackbox.conftest import WorkerHandle
+from tests.blackbox.conftest import WorkerHandle, WorkerProcessHandle
 
 CreateProject = Callable[..., Awaitable[dict]]
 
 TRIVIAL_DEFINITION = "system.trivial"
 
 _TERMINAL_JOB_STATES = {"succeeded", "failed", "cancelled", "skipped"}
+
+# The trivial Job Type's lease, seeded on the job_types row (migration 0004):
+# the configured magnitude the takeover-timing assertions measure against.
+_TRIVIAL_LEASE_SECONDS = 6.0
+
+
+def _assert_takeover_waited_out_the_lease(job: dict) -> None:
+    """Takeover magnitude (the timing-assertion rule): attempt 2 started no
+    earlier than the database-owned lease after attempt 1 started — the lease
+    expiry, not the claim poll, gated the takeover."""
+    gap = datetime.fromisoformat(job["attempts"][1]["started_at"]) - datetime.fromisoformat(
+        job["attempts"][0]["started_at"]
+    )
+    assert gap.total_seconds() >= _TRIVIAL_LEASE_SECONDS
 
 
 def _run_body(**payload: object) -> dict[str, object]:
@@ -88,6 +106,21 @@ async def _wait_for_job_attempt(
         )
         await asyncio.sleep(0.05)
     pytest.fail(f"Job {job_id} never reached attempt {attempt} within {timeout}s")
+
+
+async def _wait_for_checkpoint(
+    client: httpx.AsyncClient, job_id: str, checkpoint_key: str, timeout: float = 30.0
+) -> None:
+    """Poll until the Job's checkpoint history contains ``checkpoint_key`` —
+    pins exactly how far the doomed attempt got before the scenario kills
+    it."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        job = await _get_job(client, job_id)
+        if any(c["checkpoint_key"] == checkpoint_key for c in job["checkpoints"]):
+            return
+        await asyncio.sleep(0.05)
+    pytest.fail(f"Job {job_id} never recorded the {checkpoint_key!r} checkpoint")
 
 
 async def _replay_events(client: httpx.AsyncClient, project_id: str) -> list[dict]:
@@ -321,21 +354,57 @@ async def test_a_permanent_failure_never_retries(
     assert (await _get_run(client, run["id"]))["status"] == "failed"
 
 
+@pytest.mark.parametrize(
+    ("failure_class", "error_fragment"),
+    [
+        ("quota_exhausted", "injected quota exhausted failure"),
+        ("upstream_invalid", "injected upstream invalid failure"),
+    ],
+)
+async def test_quota_exhausted_and_upstream_invalid_failures_are_terminal(
+    client: httpx.AsyncClient,
+    create_project: CreateProject,
+    start_worker: Callable[..., WorkerHandle],
+    failure_class: str,
+    error_fragment: str,
+) -> None:
+    """The closed failure set (ADR-0003): like a permanent failure, exhausted
+    quota and upstream-invalid output never retry automatically — only a
+    transient failure does."""
+    project_id = (await create_project())["id"]
+    run = await _create_run(
+        client, project_id, _run_body(fail_step="draft", failure_class=failure_class)
+    )
+    job_id = (await _get_run(client, run["id"]))["jobs"][0]["id"]
+
+    start_worker()
+    job = await _wait_for_job(client, job_id, "failed")
+
+    assert job["attempt"] == 1  # terminal: no second attempt was scheduled
+    assert job["failure_class"] == failure_class
+    assert error_fragment in job["last_error"]
+    assert [attempt["outcome"] for attempt in job["attempts"]] == ["failed"]
+    assert (await _get_run(client, run["id"]))["status"] == "failed"
+
+
 async def test_an_expired_lease_is_taken_over_and_the_stale_attempt_is_fenced(
     client: httpx.AsyncClient,
     create_project: CreateProject,
     start_worker: Callable[..., WorkerHandle],
 ) -> None:
-    """Worker A stalls after its first step with heartbeats off (a
-    deadlocked Worker); the lease expires, Worker B takes over with a new
-    attempt and fencing token, replays step 'draft' without re-running its
-    effect, and finishes the Job. When A finally wakes, every write it
-    attempts is fenced off."""
+    """Worker A stalls between step 'draft' and its progress checkpoint with
+    heartbeats off (a deadlocked Worker); the lease expires, Worker B takes
+    over with a new attempt and fencing token, replays the committed 'draft'
+    without re-running its effect, and finishes the Job. When A finally wakes
+    it still holds the old token and attempts its late checkpoint write —
+    rejected: the record stays exactly B's."""
     project_id = (await create_project())["id"]
     run = await _create_run(
         client,
         project_id,
-        _run_body(stall_after_step="draft", stall_on_attempt=1, stall_ms=20_000),
+        # A stalls 7.5s; the lease expires at 6s, so B recovers first and A
+        # wakes into a Job it no longer owns.
+        _run_body(stall_before_checkpoint="draft", stall_on_attempt=1, stall_ms=7_500),
     )
     job_id = (await _get_run(client, run["id"]))["jobs"][0]["id"]
 
@@ -362,30 +431,40 @@ async def test_an_expired_lease_is_taken_over_and_the_stale_attempt_is_fenced(
     assert steps["draft"]["result"]["attempt"] == 1
     assert steps["polish"]["attempt"] == 2
     assert steps["polish"]["result"]["attempt"] == 2
-    # Checkpoints are append-only history: attempt 1's progress (and its
-    # stall marker) stays, attempt 2 appends its own.
+    # Checkpoints are append-only history: attempt 1's stall marker stays,
+    # and attempt 2 appends the progress attempt 1 never reached — 'draft'
+    # via the replayed committed step, 'polish' as its own work.
     assert [
         (checkpoint["checkpoint_key"], checkpoint["attempt"]) for checkpoint in job["checkpoints"]
     ] == [
-        ("after:draft", 1),
-        ("stalled:draft", 1),
+        ("stalled-before:draft", 1),
         ("after:draft", 2),
         ("after:polish", 2),
     ]
 
-    # The stale Worker cannot overwrite a newer attempt's results: A is still
-    # stalled at this point, and the Job is already terminal with exactly the
-    # two attempts above.
+    # Takeover magnitude: B had to wait out the database-owned lease (6s for
+    # this Job Type, counted from attempt 1's start), not just the next poll.
+    _assert_takeover_waited_out_the_lease(job)
+
+    # Monotonic fencing tokens (ADR-0003): attempt 2's token is strictly
+    # greater than attempt 1's, and every checkpoint carries the token of the
+    # attempt that wrote it.
+    assert [attempt["fencing_token"] for attempt in job["attempts"]] == [1, 2]
+    assert [checkpoint["fencing_token"] for checkpoint in job["checkpoints"]] == [1, 2, 2]
+
+    # A finally wakes from its stall, still holding the old token, and
+    # attempts its late checkpoint write for 'draft'. It is fenced off: the
+    # record stays exactly as B left it. The choreography bounds the race:
+    # A's stall (7.5s) outlasts the lease (6s), so B's takeover always comes
+    # first, and the wait below outlasts A's wake-up before A is stopped.
     assert recovering.worker.worker_id == job["attempts"][1]["worker_id"]
     assert stalled.worker.worker_id == job["attempts"][0]["worker_id"]
-    assert (await _get_run(client, run["id"]))["status"] == "succeeded"
-
-    # Wake A: it must stop without advancing anything.
-    await asyncio.sleep(0)  # yield so A resumes the stall countdown
+    await asyncio.sleep(3.0)  # outlast A's wake-up (7.5s) and its fenced write
     stalled.worker.stop()
     await asyncio.gather(stalled.task, return_exceptions=True)
     after = await _get_job(client, job_id)
     assert after == job  # A's late writes changed nothing
+    assert (await _get_run(client, run["id"]))["status"] == "succeeded"
 
 
 async def test_shutdown_records_an_interrupted_checkpoint_and_recovers(
@@ -425,9 +504,134 @@ async def test_shutdown_records_an_interrupted_checkpoint_and_recovers(
     job = await _wait_for_job(client, job_id, "succeeded", timeout=40.0)
     assert job["attempt"] == 2
     steps = {step["step_key"]: step for step in job["steps"]}
-    assert steps["draft"]["attempt"] == 1  # replayed, not re-executed
+    assert steps["draft"]["attempt"] == 1  # resumed from the checkpoint, not re-executed
     assert steps["polish"]["attempt"] == 2
     assert (await _get_run(client, run["id"]))["status"] == "succeeded"
+
+
+async def test_a_killed_worker_process_loses_the_lease_and_the_restart_takes_over(
+    client: httpx.AsyncClient,
+    create_project: CreateProject,
+    start_worker_process: Callable[..., Awaitable[WorkerProcessHandle]],
+) -> None:
+    """The real Worker process is killed mid-job — SIGKILL, so nothing
+    graceful can run. Its lease expires; the restarted real Worker claims the
+    recovery as a new attempt with a strictly greater fencing token, resumes
+    from the checkpoint, and completes. Recovery never reopens history: the
+    dead attempt stays abandoned in the record."""
+    project_id = (await create_project())["id"]
+    run = await _create_run(
+        client,
+        project_id,
+        _run_body(stall_after_step="draft", stall_on_attempt=1, stall_ms=60_000),
+    )
+    job_id = (await _get_run(client, run["id"]))["jobs"][0]["id"]
+
+    killed = await start_worker_process()
+    await _wait_for_job_attempt(client, job_id, attempt=1)
+    # Wait out the handler's full progress (the stall marker commits right
+    # after the checkpoint): killing any earlier would leave the exact
+    # checkpoint history below non-deterministic.
+    await _wait_for_checkpoint(client, job_id, "stalled:draft")
+
+    killed.process.kill()  # SIGKILL: no shutdown sequence, no interrupted checkpoint
+    assert await killed.process.wait() == -signal.SIGKILL
+
+    await start_worker_process()  # the restart, a fresh real Worker process
+    job = await _wait_for_job(client, job_id, "succeeded", timeout=40.0)
+
+    assert job["attempt"] == 2
+    dead, recovery = job["attempts"]
+    assert dead["outcome"] == "abandoned"
+    assert recovery["outcome"] == "succeeded"
+    assert dead["worker_id"] != recovery["worker_id"]
+    # Takeover magnitude: the restart waited out the database-owned lease,
+    # not merely the next claim poll.
+    _assert_takeover_waited_out_the_lease(job)
+    assert dead["fencing_token"] < recovery["fencing_token"]
+
+    steps = {step["step_key"]: step for step in job["steps"]}
+    assert steps["draft"]["attempt"] == 1  # resumed from the checkpoint
+    assert steps["polish"]["attempt"] == 2
+    assert [(c["checkpoint_key"], c["attempt"]) for c in job["checkpoints"]] == [
+        ("after:draft", 1),
+        ("stalled:draft", 1),
+        ("after:polish", 2),
+    ]
+    assert (await _get_run(client, run["id"]))["status"] == "succeeded"
+    events = await _replay_events(client, project_id)
+    assert _job_state_path(events, job_id) == [
+        "ready",
+        "leased",
+        "running",
+        "interrupted",  # the lease expiry marks the dead Worker's interruption
+        "leased",  # the restart's takeover, under a new fencing token
+        "running",
+        "succeeded",
+    ]
+
+
+async def test_a_terminated_worker_process_resumes_from_the_interrupted_checkpoint(
+    client: httpx.AsyncClient,
+    create_project: CreateProject,
+    start_worker_process: Callable[..., Awaitable[WorkerProcessHandle]],
+) -> None:
+    """SIGTERM mid-job to the real Worker process: the entrypoint's shutdown
+    sequence runs — stop claiming, request cooperative cancellation, wait the
+    graceful timeout — and, the handler being stuck, records the interrupted
+    checkpoint and exits. The restarted Worker claims the interrupted Job
+    with a new attempt and resumes from the checkpoint."""
+    project_id = (await create_project())["id"]
+    run = await _create_run(
+        client,
+        project_id,
+        _run_body(stall_after_step="draft", stall_on_attempt=1, stall_ms=60_000),
+    )
+    job_id = (await _get_run(client, run["id"]))["jobs"][0]["id"]
+
+    terminated = await start_worker_process()
+    await _wait_for_job_attempt(client, job_id, attempt=1)
+    # Wait out the handler's full progress, as in the SIGKILL scenario, so
+    # the checkpoint history the restart leaves behind is deterministic.
+    await _wait_for_checkpoint(client, job_id, "stalled:draft")
+
+    terminated.process.send_signal(signal.SIGTERM)
+    await asyncio.wait_for(terminated.process.wait(), timeout=15.0)
+
+    interrupted = await _wait_for_job(client, job_id, "interrupted")
+    assert interrupted["attempts"][0]["outcome"] == "interrupted"
+    assert "interrupted" in [c["checkpoint_key"] for c in interrupted["checkpoints"]], (
+        "the forced exit must record an interrupted checkpoint"
+    )
+
+    await start_worker_process()  # the restart
+    job = await _wait_for_job(client, job_id, "succeeded", timeout=40.0)
+
+    assert job["attempt"] == 2
+    dead, recovery = job["attempts"]
+    assert (dead["outcome"], recovery["outcome"]) == ("interrupted", "succeeded")
+    assert dead["fencing_token"] < recovery["fencing_token"]
+    steps = {step["step_key"]: step for step in job["steps"]}
+    assert steps["draft"]["attempt"] == 1  # resumed from the checkpoint
+    assert steps["polish"]["attempt"] == 2
+    assert [(c["checkpoint_key"], c["attempt"]) for c in job["checkpoints"]] == [
+        ("after:draft", 1),
+        ("stalled:draft", 1),
+        ("interrupted", 1),
+        ("after:polish", 2),
+    ]
+    assert (await _get_run(client, run["id"]))["status"] == "succeeded"
+    events = await _replay_events(client, project_id)
+    assert _job_state_path(events, job_id) == [
+        "ready",
+        "leased",
+        "running",
+        "cancel_requested",  # the graceful sequence's cooperative request
+        "interrupted",  # forced out at the graceful timeout
+        "leased",  # the restart's new attempt
+        "running",
+        "succeeded",
+    ]
 
 
 async def test_a_cancellation_request_is_honored_at_the_next_safe_checkpoint(

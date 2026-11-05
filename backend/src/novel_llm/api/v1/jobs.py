@@ -19,6 +19,9 @@ router = APIRouter(tags=["jobs"])
 
 class AttemptResource(BaseModel):
     attempt: int
+    # The attempt's monotonic fencing token (ADR-0003): every checkpoint this
+    # attempt wrote carries it, and a later attempt's is strictly greater.
+    fencing_token: int
     worker_id: str
     outcome: str | None
     failure_class: str | None
@@ -38,6 +41,9 @@ class StepResource(BaseModel):
 class CheckpointResource(BaseModel):
     checkpoint_key: str
     attempt: int
+    # The fencing token of the attempt that recorded this checkpoint: a stale
+    # Worker holding an older token can never appear in this history.
+    fencing_token: int
     state: dict[str, Any]
     created_at: datetime
 
@@ -90,6 +96,7 @@ async def get_job(
         attempts=[
             AttemptResource(
                 attempt=attempt.attempt,
+                fencing_token=attempt.fencing_token,
                 worker_id=attempt.worker_id,
                 outcome=attempt.outcome,
                 failure_class=attempt.failure_class,
@@ -113,6 +120,7 @@ async def get_job(
             CheckpointResource(
                 checkpoint_key=checkpoint.checkpoint_key,
                 attempt=checkpoint.attempt,
+                fencing_token=checkpoint.fencing_token,
                 state=checkpoint.state,
                 created_at=checkpoint.created_at,
             )

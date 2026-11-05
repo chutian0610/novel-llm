@@ -212,6 +212,8 @@ export interface components {
         AttemptResource: {
             /** Attempt */
             attempt: number;
+            /** Fencing Token */
+            fencing_token: number;
             /** Worker Id */
             worker_id: string;
             /** Outcome */
@@ -245,6 +247,8 @@ export interface components {
             checkpoint_key: string;
             /** Attempt */
             attempt: number;
+            /** Fencing Token */
+            fencing_token: number;
             /** State */
             state: {
                 [key: string]: unknown;
