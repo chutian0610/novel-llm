@@ -23,6 +23,7 @@ from novel_llm.domain.errors import (
     ProjectArchived,
     ProjectNotFound,
 )
+from novel_llm.domain.events import record_event
 from novel_llm.domain.ids import new_id
 from novel_llm.infrastructure.orm import ProjectIdempotencyKeyRow, ProjectRow
 
@@ -127,6 +128,12 @@ async def create_project(
         .returning(ProjectRow)
     )
     row = result.scalar_one()
+    record_event(
+        session,
+        project_id=project_id,
+        event_type="project.created",
+        payload={"project_id": str(project_id), "title": title, "language": language},
+    )
     await session.commit()
     return _to_project(row), True
 
@@ -240,6 +247,16 @@ async def update_project(
 
     row = (await session.execute(statement)).scalar_one_or_none()
     if row is not None:
+        record_event(
+            session,
+            project_id=project_id,
+            event_type="project.updated",
+            payload={
+                "project_id": str(project_id),
+                "fields": sorted(values),
+                "revision": row.revision,
+            },
+        )
         await session.commit()
         return _to_project(row)
 
@@ -269,6 +286,12 @@ async def archive_project(
 
     row = (await session.execute(statement)).scalar_one_or_none()
     if row is not None:
+        record_event(
+            session,
+            project_id=project_id,
+            event_type="project.archived",
+            payload={"project_id": str(project_id), "revision": row.revision},
+        )
         await session.commit()
         return _to_project(row)
 
