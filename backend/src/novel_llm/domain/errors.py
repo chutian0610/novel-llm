@@ -45,3 +45,27 @@ class InvalidCursor(DomainError):
     status = 400
     code = "invalid_cursor"
     title = "Malformed pagination cursor"
+
+
+class WorkflowRunNotFound(DomainError):
+    status = 404
+    code = "workflow_run_not_found"
+    title = "Workflow Run not found"
+
+
+class JobNotFound(DomainError):
+    status = 404
+    code = "job_not_found"
+    title = "Job not found"
+
+
+class UnknownWorkflowDefinition(DomainError):
+    status = 400
+    code = "unknown_workflow_definition"
+    title = "Unknown Workflow Definition"
+
+
+class InvalidWorkflowPayload(DomainError):
+    status = 400
+    code = "invalid_workflow_payload"
+    title = "Workflow Run payload does not match the definition schema"

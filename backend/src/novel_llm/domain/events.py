@@ -30,6 +30,12 @@ PROJECT_CREATED = "project.created"
 PROJECT_UPDATED = "project.updated"
 PROJECT_ARCHIVED = "project.archived"
 
+# Event types on the workflow runtime (ADR-0003): every outer Job and
+# Workflow Run transition is a job-state event, observable over the same
+# durable feed and SSE stream.
+WORKFLOW_RUN_STATE_CHANGED = "workflow_run.state_changed"
+JOB_STATE_CHANGED = "job.state_changed"
+
 
 @dataclass(frozen=True, slots=True)
 class DomainEvent:

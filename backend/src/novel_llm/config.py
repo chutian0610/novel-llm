@@ -38,12 +38,23 @@ class LogSettings(BaseModel):
     level: str = "INFO"
 
 
+class WorkerSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Worker concurrency defaults to one (ADR-0003); Jobs for the same
+    # Project are serialized by the database regardless of this number.
+    concurrency: int = Field(default=1, ge=1)
+    poll_seconds: float = Field(default=0.5, gt=0)
+    graceful_timeout_seconds: float = Field(default=10.0, gt=0)
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     database: DatabaseSettings
     storage: StorageSettings
     log: LogSettings = Field(default_factory=LogSettings)
+    worker: WorkerSettings = Field(default_factory=WorkerSettings)
 
 
 _PROFILE_LOCAL = "local"

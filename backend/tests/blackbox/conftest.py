@@ -8,11 +8,17 @@ Two client fixtures cover the HTTP boundary: `client` drives the ASGI app
 in-process (fast, for request/response endpoints); `live_server` runs the app
 under a real uvicorn listener on loopback (SSE only — the in-process ASGI
 transport buffers until the response completes, so it cannot observe a live
-stream)."""
+stream).
+
+`start_worker` runs the real Worker loop in-process against the same
+database (the runtime is a library object the entrypoint merely wires), with
+the deterministic fault-injection levers the framework acceptance tests
+need."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from uuid import uuid4
 
 import httpx
@@ -21,11 +27,13 @@ import sqlalchemy as sa
 import uvicorn
 from asgi_lifespan import LifespanManager
 from sqlalchemy.engine import make_url
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+import novel_llm.workflows.trivial  # noqa: F401 — registers the workflow definitions
 from novel_llm.api.app import create_app
-from novel_llm.config import Config, DatabaseSettings, load_config
+from novel_llm.config import Config, DatabaseSettings, WorkerSettings, load_config
 from novel_llm.infrastructure.migrations import upgrade_to_head
+from novel_llm.worker.runtime import Worker, WorkerFaults
 
 
 def _with_database_name(url: str, name: str) -> str:
@@ -115,3 +123,69 @@ async def fresh_client(test_config: Config):
             transport=transport, base_url="http://testserver"
         ) as async_client:
             yield async_client
+
+
+@dataclass
+class WorkerHandle:
+    """A running real Worker loop and the engine underneath it."""
+
+    worker: Worker
+    engine: AsyncEngine
+    task: asyncio.Task[None]
+
+
+@pytest.fixture
+async def start_worker(db_url: str) -> AsyncIterator[Callable[..., WorkerHandle]]:
+    """Start real Worker loops (the same object `python -m novel_llm.worker.main`
+    wires) against the per-test database; all are stopped gracefully on
+    teardown."""
+    handles: list[WorkerHandle] = []
+
+    def _start(
+        *,
+        concurrency: int = 1,
+        poll_seconds: float = 0.05,
+        graceful_timeout_seconds: float = 1.0,
+        skip_heartbeats: bool = False,
+    ) -> WorkerHandle:
+        engine = create_async_engine(db_url)
+        settings = WorkerSettings(
+            concurrency=concurrency,
+            poll_seconds=poll_seconds,
+            graceful_timeout_seconds=graceful_timeout_seconds,
+        )
+        worker = Worker(
+            engine,
+            settings,
+            faults=WorkerFaults(skip_heartbeats=skip_heartbeats),
+        )
+        task = asyncio.create_task(worker.run())
+        handle = WorkerHandle(worker=worker, engine=engine, task=task)
+        handles.append(handle)
+        return handle
+
+    yield _start
+
+    for handle in handles:
+        handle.worker.stop()
+    if handles:
+        await asyncio.gather(*(handle.task for handle in handles), return_exceptions=True)
+    for handle in handles:
+        await handle.engine.dispose()
+
+
+@pytest.fixture
+def create_project(client: httpx.AsyncClient) -> Callable[..., object]:
+    """Create a Project through the API and return its resource."""
+
+    async def _create(**overrides: object) -> dict:
+        body = {"title": f"项目-{uuid4().hex[:6]}", **overrides}
+        response = await client.post(
+            "/api/v1/projects",
+            json=body,
+            headers={"Idempotency-Key": f"create-{uuid4()}"},
+        )
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    return _create

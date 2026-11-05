@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+import novel_llm.workflows.trivial  # noqa: F401 — registers the workflow definitions
 from novel_llm.api import health, problems, v1
 from novel_llm.config import Config, load_config
 from novel_llm.infrastructure.db import create_db_engine

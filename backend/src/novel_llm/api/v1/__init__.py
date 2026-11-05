@@ -8,11 +8,13 @@ anchor.
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from novel_llm.api.v1 import project_events, projects
+from novel_llm.api.v1 import jobs, project_events, projects, workflow_runs
 
 router = APIRouter()
 router.include_router(projects.router)
 router.include_router(project_events.router)
+router.include_router(workflow_runs.router)
+router.include_router(jobs.router)
 
 
 class APIRoot(BaseModel):

@@ -11,3 +11,8 @@ path = "/tmp/novel-llm-test-storage"
 
 [log]
 level = "WARNING"
+
+[worker]
+# Fast polling and a short graceful timeout so runtime tests stay quick.
+poll_seconds = 0.05
+graceful_timeout_seconds = 1.0
