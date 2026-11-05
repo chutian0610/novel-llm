@@ -121,4 +121,32 @@ describe("useProjectEvents(项目事件流)", () => {
     expect(result.current.connection).toBe("unavailable");
     expect(result.current.events).toEqual([]);
   });
+
+  it("未知信封版本被丢弃,不当作已理解渲染", async () => {
+    const { result } = renderHook(() => useProjectEvents("p1", urlFactory()));
+    await waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+    const source = FakeEventSource.instances[0];
+
+    act(() => {
+      source.onopen?.();
+      source.emit({ ...envelope("f1", "project.created", "未来之书"), envelope_version: 2 });
+      source.emit(envelope("f2", "project.created", "当前之书"));
+    });
+
+    expect(result.current.events.map((event) => event.eventId)).toEqual(["f2"]);
+  });
+
+  it("无法解析的消息被忽略", async () => {
+    const { result } = renderHook(() => useProjectEvents("p1", urlFactory()));
+    await waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+    const source = FakeEventSource.instances[0];
+
+    act(() => {
+      source.onopen?.();
+      source.onmessage?.({ data: "not-json" } as MessageEvent);
+      source.emit(envelope("g1", "project.created", "长夜灯"));
+    });
+
+    expect(result.current.events.map((event) => event.eventId)).toEqual(["g1"]);
+  });
 });

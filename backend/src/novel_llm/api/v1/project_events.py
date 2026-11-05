@@ -8,6 +8,9 @@ and the live SSE stream, both serving the same versioned envelope.
   after the cursor, then follow the outbox live (short polling of the durable
   events; the stream is an optimization, the outbox is the contract).
 
+The stream also honors the SSE ``Last-Event-ID`` header when no ``cursor``
+query is given, so a native EventSource auto-reconnect keeps its place.
+
 Delivery is at-least-once: consumers deduplicate by event id.
 """
 
@@ -17,7 +20,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from novel_llm.api.dependencies import get_db_session
 from novel_llm.api.problems import Problem
 from novel_llm.domain import events
+from novel_llm.domain.errors import InvalidCursor
 from novel_llm.domain.projects import get_project
 
 router = APIRouter(tags=["events"])
@@ -52,18 +56,22 @@ def _envelope_resource(event: events.DomainEvent) -> EventEnvelopeResource:
     return EventEnvelopeResource.model_validate(events.envelope(event))
 
 
-async def _replay_page(
-    session: AsyncSession, *, project_id: UUID, after: UUID | None, limit: int
-) -> list[events.DomainEvent]:
-    """One ascending replay page; the page's last id is the follow-up cursor."""
-    return await events.list_events(session, project_id=project_id, after=after, limit=limit)
+def _parse_cursor(value: str | None) -> UUID | None:
+    """A malformed cursor is a client error, not a server fault (ADR-0008:
+    problem-details with stable error codes)."""
+    if value is None or value == "":
+        return None
+    try:
+        return UUID(value)
+    except ValueError:
+        raise InvalidCursor("the event cursor is malformed") from None
 
 
 @router.get(
     "/projects/{project_id}/events",
     response_model=EventListResource,
     responses={
-        400: {"model": Problem, "description": "Malformed cursor or query"},
+        400: {"model": Problem, "description": "Malformed event cursor"},
         404: {"model": Problem, "description": "Project not found"},
     },
 )
@@ -74,8 +82,9 @@ async def list_project_events(
     limit: Annotated[int, Query(ge=1, le=_REPLAY_LIMIT)] = 100,
 ) -> EventListResource:
     await get_project(session, project_id)  # unknown Project is 404, not an empty feed
-    after_id = UUID(after) if after is not None else None
-    found = await _replay_page(session, project_id=project_id, after=after_id, limit=limit)
+    found = await events.list_events(
+        session, project_id=project_id, after=_parse_cursor(after), limit=limit
+    )
     next_cursor = str(found[-1].id) if len(found) == limit else None
     return EventListResource(
         items=[_envelope_resource(event) for event in found],
@@ -102,7 +111,7 @@ async def _event_stream(
 
     while not await request.is_disconnected():
         async with AsyncSession(engine, expire_on_commit=False) as session:
-            found = await _replay_page(
+            found = await events.list_events(
                 session, project_id=project_id, after=last_id, limit=_REPLAY_LIMIT
             )
         for event in found:
@@ -122,6 +131,7 @@ async def _event_stream(
     "/projects/{project_id}/events/stream",
     response_class=StreamingResponse,
     responses={
+        400: {"model": Problem, "description": "Malformed event cursor"},
         404: {"model": Problem, "description": "Project not found"},
     },
 )
@@ -130,11 +140,14 @@ async def stream_project_events(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     cursor: Annotated[str | None, Query()] = None,
+    last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
 ) -> StreamingResponse:
     await get_project(session, project_id)
-    after = UUID(cursor) if cursor is not None else None
+    # ?cursor= wins; a native EventSource auto-reconnect only sends the
+    # Last-Event-ID header, and that keeps its place too.
+    resume = cursor if cursor is not None else last_event_id
     return StreamingResponse(
-        _event_stream(request, project_id, after),
+        _event_stream(request, project_id, _parse_cursor(resume)),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

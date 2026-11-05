@@ -556,7 +556,7 @@
             }
           },
           "400": {
-            "description": "Malformed cursor or query",
+            "description": "Malformed event cursor",
             "content": {
               "application/json": {
                 "schema": {
@@ -621,11 +621,37 @@
               ],
               "title": "Cursor"
             }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
           }
         ],
         "responses": {
           "200": {
             "description": "Successful Response"
+          },
+          "400": {
+            "description": "Malformed event cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           },
           "404": {
             "description": "Project not found",

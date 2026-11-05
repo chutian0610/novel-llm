@@ -119,6 +119,53 @@ async def test_events_of_unknown_project_are_problem_details(client: httpx.Async
     assert stream.json()["code"] == "project_not_found"
 
 
+async def test_malformed_event_cursor_is_problem_details(client: httpx.AsyncClient):
+    created = await create_project(client, "evt-bad-cursor", "坏游标之书")
+    project_id = created.json()["id"]
+
+    replay = await client.get(f"/api/v1/projects/{project_id}/events", params={"after": "junk"})
+    assert replay.status_code == 400
+    assert replay.json()["code"] == "invalid_cursor"
+
+    stream = await client.get(
+        f"/api/v1/projects/{project_id}/events/stream", params={"cursor": "junk"}
+    )
+    assert stream.status_code == 400
+    assert stream.json()["code"] == "invalid_cursor"
+
+
+async def test_stream_resumes_from_last_event_id_header(live_server: str):
+    """A native EventSource auto-reconnect sends Last-Event-ID, not ?cursor=."""
+    async with httpx.AsyncClient(base_url=live_server, timeout=10) as client:
+        created = await create_project(client, "sse-lei", "原生重连之书")
+        project_id = created.json()["id"]
+
+        page = await client.get(f"/api/v1/projects/{project_id}/events")
+        last_event_id = page.json()["items"][-1]["event_id"]
+
+        detail = await client.get(f"/api/v1/projects/{project_id}")
+        patched = await client.patch(
+            f"/api/v1/projects/{project_id}",
+            json={"title": "原生重连之书(修)"},
+            headers={"If-Match": detail.headers["etag"]},
+        )
+        assert patched.status_code == 200
+
+        async with client.stream(
+            "GET",
+            f"/api/v1/projects/{project_id}/events/stream",
+            headers={"Last-Event-ID": last_event_id, "accept": "text/event-stream"},
+        ) as stream_response:
+            assert stream_response.status_code == 200
+            first_frame: dict | None = None
+            async for line in stream_response.aiter_lines():
+                if line.startswith("data: "):
+                    first_frame = json.loads(line[len("data: ") :])
+                    break
+        assert first_frame is not None
+        assert first_frame["event_type"] == "project.updated"
+
+
 def _parse_sse_frames(raw: str) -> list[dict]:
     envelopes: list[dict] = []
     for block in raw.split("\n\n"):

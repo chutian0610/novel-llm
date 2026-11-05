@@ -16,6 +16,7 @@ from sqlalchemy import and_, insert, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from novel_llm.domain import events
 from novel_llm.domain.cursor import decode_cursor, encode_cursor
 from novel_llm.domain.errors import (
     ConcurrencyConflict,
@@ -131,7 +132,7 @@ async def create_project(
     record_event(
         session,
         project_id=project_id,
-        event_type="project.created",
+        event_type=events.PROJECT_CREATED,
         payload={"project_id": str(project_id), "title": title, "language": language},
     )
     await session.commit()
@@ -250,7 +251,7 @@ async def update_project(
         record_event(
             session,
             project_id=project_id,
-            event_type="project.updated",
+            event_type=events.PROJECT_UPDATED,
             payload={
                 "project_id": str(project_id),
                 "fields": sorted(values),
@@ -289,7 +290,7 @@ async def archive_project(
         record_event(
             session,
             project_id=project_id,
-            event_type="project.archived",
+            event_type=events.PROJECT_ARCHIVED,
             payload={"project_id": str(project_id), "revision": row.revision},
         )
         await session.commit()

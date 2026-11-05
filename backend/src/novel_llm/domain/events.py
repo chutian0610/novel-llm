@@ -16,13 +16,19 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import insert, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from novel_llm.domain.ids import new_id
 from novel_llm.infrastructure.orm import DomainEventRow
 
 ENVELOPE_VERSION = 1
+
+# Event types on the Project lifecycle. Constants keep producers and the
+# API surface spelling them identically.
+PROJECT_CREATED = "project.created"
+PROJECT_UPDATED = "project.updated"
+PROJECT_ARCHIVED = "project.archived"
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,18 +97,3 @@ async def list_events(
         )
         for row in rows
     ]
-
-
-async def insert_event(
-    session: AsyncSession, *, project_id: UUID, event_type: str, payload: dict[str, Any]
-) -> None:
-    """Directly append one event (outbox maintenance and tests)."""
-    await session.execute(
-        insert(DomainEventRow).values(
-            id=new_id(),
-            project_id=project_id,
-            event_type=event_type,
-            payload=payload,
-            occurred_at=datetime.now(UTC),
-        )
-    )

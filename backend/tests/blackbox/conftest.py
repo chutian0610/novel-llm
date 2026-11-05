@@ -92,8 +92,13 @@ async def live_server(test_config: Config, db_url: str) -> AsyncIterator[str]:
     server_config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
     server = uvicorn.Server(server_config)
     serve_task = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.01)
+    for _ in range(500):  # fail fast instead of hanging if the server never starts
+        if server.started:
+            break
+        await asyncio.sleep(0.02)
+    if not server.started:
+        serve_task.cancel()
+        raise RuntimeError("the live SSE server never started")
     port = server.servers[0].sockets[0].getsockname()[1]
     yield f"http://127.0.0.1:{port}"
     server.should_exit = True

@@ -686,7 +686,7 @@ export interface operations {
                     "application/json": components["schemas"]["EventListResource"];
                 };
             };
-            /** @description Malformed cursor or query */
+            /** @description Malformed event cursor */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -720,7 +720,9 @@ export interface operations {
             query?: {
                 cursor?: string | null;
             };
-            header?: never;
+            header?: {
+                "Last-Event-ID"?: string | null;
+            };
             path: {
                 project_id: string;
             };
@@ -734,6 +736,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Malformed event cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
             };
             /** @description Project not found */
             404: {
