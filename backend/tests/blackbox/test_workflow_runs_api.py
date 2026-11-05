@@ -97,6 +97,18 @@ async def test_a_payload_that_violates_the_definition_schema_is_rejected(
     assert response.json()["code"] == "invalid_workflow_payload"
 
 
+async def test_an_unknown_payload_key_is_rejected_not_silently_dropped(
+    client: httpx.AsyncClient, create_project: CreateProject
+) -> None:
+    """Fault-injection choreography keys must not silently vanish: a misspelled
+    key would leave the fault unfired and the scenario meaningless. The
+    definition forbids unknown keys, so the typo is a 400 at creation."""
+    project_id = (await create_project())["id"]
+    response = await create_run(client, project_id, _create_run_body(stall_on_attemp=1))
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_workflow_payload"
+
+
 async def test_a_workflow_run_for_an_unknown_project_is_not_found(
     client: httpx.AsyncClient,
 ) -> None:

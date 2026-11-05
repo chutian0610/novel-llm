@@ -14,6 +14,12 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
+## Branches
+
+- One branch per ticket: `<issue-number>-<slug>` (e.g. `5-job-runtime`), merged by pull request. A ticket's work never lands on another ticket's branch — that would mix two issues into one PR.
+- When a ticket builds on an unmerged ticket, branch **from that ticket's branch** (stacked) and merge in dependency order; after the base merges, the stacked PR diffs cleanly against main.
+- This overrides the implement skill's "commit to the current branch" default: check `gh pr list --state open` for the base ticket's branch before committing.
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
