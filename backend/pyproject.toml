@@ -10,6 +10,7 @@ dependencies = [
     "asyncpg>=0.30",
     "alembic>=1.14",
     "pydantic>=2.10",
+    "uuid-utils>=1.2.0",
 ]
 
 [dependency-groups]
@@ -19,6 +20,7 @@ dev = [
     "httpx>=0.28",
     "ruff>=0.8",
     "mypy>=1.14",
+    "asgi-lifespan>=2.1.0",
 ]
 
 [build-system]

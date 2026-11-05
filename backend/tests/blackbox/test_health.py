@@ -5,19 +5,6 @@ without needing the Worker or any workflow to run.
 """
 
 import httpx
-import pytest
-
-from novel_llm.api.app import create_app
-from novel_llm.config import Config
-from novel_llm.infrastructure.migrations import upgrade_to_head
-
-
-@pytest.fixture
-async def client(app_config: Config):
-    app = create_app(config=app_config)
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as async_client:
-        yield async_client
 
 
 async def test_healthz_reports_liveness(client: httpx.AsyncClient):
@@ -26,8 +13,8 @@ async def test_healthz_reports_liveness(client: httpx.AsyncClient):
     assert response.json() == {"status": "ok"}
 
 
-async def test_readyz_is_unavailable_before_migrations(client: httpx.AsyncClient):
-    response = await client.get("/readyz")
+async def test_readyz_is_unavailable_before_migrations(fresh_client: httpx.AsyncClient):
+    response = await fresh_client.get("/readyz")
     assert response.status_code == 503
     body = response.json()
     assert body["status"] == "unavailable"
@@ -35,8 +22,7 @@ async def test_readyz_is_unavailable_before_migrations(client: httpx.AsyncClient
     assert body["checks"]["migrations"]["status"] == "error"
 
 
-async def test_readyz_reports_ready_after_migrations(client: httpx.AsyncClient, app_config: Config):
-    await upgrade_to_head(app_config.database.url)
+async def test_readyz_reports_ready_after_migrations(client: httpx.AsyncClient):
     response = await client.get("/readyz")
     assert response.status_code == 200
     body = response.json()

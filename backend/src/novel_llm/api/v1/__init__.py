@@ -1,6 +1,6 @@
 """Versioned public API surface (/api/v1, ADR-0008).
 
-Domain resources land here in later Phase 1 tickets; the skeleton exposes the
+Domain resources land here in their Phase 1 tickets; the skeleton exposes the
 versioned root so the generated typed client and drift check have a stable
 anchor.
 """
@@ -8,7 +8,10 @@ anchor.
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from novel_llm.api.v1 import projects
+
 router = APIRouter()
+router.include_router(projects.router)
 
 
 class APIRoot(BaseModel):
