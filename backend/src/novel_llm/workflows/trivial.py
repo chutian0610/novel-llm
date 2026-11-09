@@ -16,7 +16,7 @@ internals.
 import asyncio
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from novel_llm.domain.job_execution import JobCancelled, JobContext, TransientJobFailure
 from novel_llm.workflows.definitions import WorkflowDefinition, register
@@ -27,6 +27,11 @@ JOB_TYPE = "trivial_work"
 
 
 class TrivialRunPayload(BaseModel):
+    # Fault-injection choreography keys must not silently vanish: an unknown
+    # key (a typo in a test payload) is a 400 at run creation, not an idle
+    # fault that turns the scenario meaningless.
+    model_config = ConfigDict(extra="forbid")
+
     steps: list[str] = Field(
         default=["draft", "polish"],
         min_length=1,

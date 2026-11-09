@@ -15,3 +15,7 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 ### Domain docs
 
 Single-context: `GLOSSARY.md` at the repo root, ADRs in `docs/adr/`. See `docs/agents/domain.md`.
+
+### Coding standards
+
+Judgement-call rules for code review live in [CODING_STANDARDS.md](CODING_STANDARDS.md).
