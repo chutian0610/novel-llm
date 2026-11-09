@@ -13,12 +13,17 @@ stream).
 `start_worker` runs the real Worker loop in-process against the same
 database (the runtime is a library object the entrypoint merely wires), with
 the deterministic fault-injection levers the framework acceptance tests
-need."""
+need. `start_worker_process` goes one level blacker: it runs the actual
+`python -m novel_llm.worker.main` entrypoint as an OS process, so crash
+recovery is exercised against a Worker that can really be killed."""
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+import os
+import sys
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
@@ -172,6 +177,81 @@ async def start_worker(db_url: str) -> AsyncIterator[Callable[..., WorkerHandle]
         await asyncio.gather(*(handle.task for handle in handles), return_exceptions=True)
     for handle in handles:
         await handle.engine.dispose()
+
+
+@dataclass
+class WorkerProcessHandle:
+    """A real Worker process (the `python -m novel_llm.worker.main`
+    entrypoint) wired to the per-test database through its own config
+    directory."""
+
+    process: asyncio.subprocess.Process
+    config_dir: Path
+
+
+@pytest.fixture
+async def start_worker_process(
+    db_url: str, tmp_path: Path
+) -> AsyncIterator[Callable[..., Awaitable[WorkerProcessHandle]]]:
+    """Start real Worker processes — the OS-level entrypoint a deploy runs —
+    against the per-test database. Each process gets its own layered config
+    directory (fast polling, short graceful timeout) via NOVEL_LLM_CONFIG_DIR,
+    exactly as the production entrypoint loads configuration. Teardown
+    terminates anything still running."""
+    handles: list[WorkerProcessHandle] = []
+    backend_root = Path(__file__).resolve().parents[2]
+
+    async def _start() -> WorkerProcessHandle:
+        config_dir = tmp_path / f"worker-{len(handles)}-config"
+        config_dir.mkdir()
+        (config_dir / "default.toml").write_text(
+            "\n".join(
+                [
+                    "[database]",
+                    f'url = "{db_url}"',
+                    "",
+                    "[storage]",
+                    f'path = "{tmp_path / f"worker-{len(handles)}-storage"}"',
+                    "",
+                    "[log]",
+                    'level = "WARNING"',
+                    "",
+                    "[worker]",
+                    "concurrency = 1",
+                    "poll_seconds = 0.05",
+                    "graceful_timeout_seconds = 1.0",
+                    "",
+                ]
+            )
+        )
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "novel_llm.worker.main",
+            cwd=backend_root,
+            env={**os.environ, "NOVEL_LLM_CONFIG_DIR": str(config_dir.resolve())},
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        handle = WorkerProcessHandle(process=process, config_dir=config_dir)
+        handles.append(handle)
+        return handle
+
+    yield _start
+
+    for handle in handles:
+        if handle.process.returncode is None:
+            handle.process.terminate()
+    for handle in handles:
+        try:
+            await asyncio.wait_for(handle.process.wait(), timeout=10.0)
+        except TimeoutError:
+            handle.process.kill()
+            await handle.process.wait()
+        # Drain the pipes so the transports close cleanly with the loop.
+        out, err = await handle.process.communicate()
+        if handle.process.returncode not in (0, -9):
+            print(f"\nworker process (rc={handle.process.returncode}) stderr:\n{err.decode()}")
 
 
 @pytest.fixture

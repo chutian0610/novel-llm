@@ -21,7 +21,9 @@ from novel_llm.domain.job_execution import (
     JobCancelled,
     JobContext,
     LeaseLostError,
+    QuotaExhaustedFailure,
     TransientJobFailure,
+    UpstreamInvalidFailure,
 )
 from novel_llm.domain.jobs import ActiveJob
 from novel_llm.workflows.handlers import resolve_handler
@@ -209,6 +211,10 @@ class Worker:
             await self._fail(job, "timeout", "the Job exceeded its database-owned timeout")
         except TransientJobFailure as error:
             await self._fail(job, "transient", str(error))
+        except QuotaExhaustedFailure as error:
+            await self._fail(job, "quota_exhausted", str(error))
+        except UpstreamInvalidFailure as error:
+            await self._fail(job, "upstream_invalid", str(error))
         except asyncio.CancelledError:
             await self._force_interrupt(job)
             raise

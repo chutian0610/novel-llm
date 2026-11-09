@@ -749,7 +749,9 @@ async def list_job_checkpoints(session: AsyncSession, job_id: UUID) -> list[JobC
     query = (
         select(JobCheckpointRow)
         .where(JobCheckpointRow.job_id == job_id)
-        .order_by(JobCheckpointRow.created_at.asc())
+        # id (UUIDv7, time-ordered) breaks created_at ties so the resume
+        # position derived from this history is deterministic.
+        .order_by(JobCheckpointRow.created_at.asc(), JobCheckpointRow.id.asc())
     )
     return list((await session.execute(query)).scalars().all())
 

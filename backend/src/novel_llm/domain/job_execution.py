@@ -29,6 +29,19 @@ class TransientJobFailure(Exception):
     be retried safely under the Job Type's database-owned retry settings."""
 
 
+class QuotaExhaustedFailure(Exception):
+    """The provider quota behind the Job's bound model profile is exhausted
+    (ADR-0003's closed failure set). Terminal: no automatic retry — adding
+    quota is a human decision, and a retry would only burn the attempt."""
+
+
+class UpstreamInvalidFailure(Exception):
+    """The upstream provider rejected the request or returned output the
+    Job's typed contract cannot accept for reasons its inputs cannot fix
+    (ADR-0003's closed failure set). Terminal: retrying identical work would
+    fail identically."""
+
+
 class JobCancelled(Exception):
     """The Job observed a cancellation request at a safe checkpoint and
     stopped without continuing its normal outcome."""
@@ -142,3 +155,12 @@ class JobContext:
                 raise LeaseLostError(
                     f"checkpoint {checkpoint_key!r} could not commit: the lease was taken over"
                 ) from None
+
+    async def checkpoint_history(self) -> list[tuple[str, dict[str, Any]]]:
+        """The Job's checkpoints, oldest first — the durable record a new
+        attempt resumes from (ADR-0003). Reading mutates nothing, but a stale
+        attempt is still stopped here before it does further work."""
+        self._raise_if_lease_lost()
+        async with self._session_factory() as session:
+            checkpoints = await jobs.list_job_checkpoints(session, self.job_id)
+        return [(checkpoint.checkpoint_key, dict(checkpoint.state)) for checkpoint in checkpoints]
