@@ -72,9 +72,12 @@ class JobLifecycle(StateMachine):
     # The claim is given back before execution starts (worker shutdown).
     release = leased.to(ready)
     # A dead Worker's lease expires; recovery (take_over) starts a new attempt.
+    # A pause request pending on a dead Worker is consumed by the
+    # interruption: recovery resumes execution rather than freezing it.
     interrupt = (
         leased.to(interrupted)
         | running.to(interrupted)
+        | pause_requested.to(interrupted)
         | cancel_requested.to(interrupted)
         | cancelling.to(interrupted)
     )

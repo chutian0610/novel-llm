@@ -20,6 +20,7 @@ from novel_llm.domain import jobs
 from novel_llm.domain.job_execution import (
     JobCancelled,
     JobContext,
+    JobPaused,
     LeaseLostError,
     QuotaExhaustedFailure,
     TransientJobFailure,
@@ -48,6 +49,7 @@ class _Execution:
 
     job: ActiveJob
     cancel_requested: asyncio.Event
+    pause_requested: asyncio.Event
     lease_lost: asyncio.Event
 
 
@@ -86,14 +88,18 @@ class Worker:
         # Stop claiming happened above; now request cooperative cancellation
         # for every active Job — as a durable control request the database
         # can see, and as a signal the handler checks at its next checkpoint.
+        # A Job already holding a pause request keeps it: the lifecycle takes
+        # one control request at a time, so the handler will honor the pause
+        # instead of a cancellation that could not land.
         for execution in list(self._active.values()):
             async with self._session_factory() as session:
-                await jobs.request_cancellation(
+                requested = await jobs.request_cooperative_cancellation(
                     session,
                     job_id=execution.job.id,
                     fencing_token=execution.job.fencing_token,
                 )
-            execution.cancel_requested.set()
+            if requested:
+                execution.cancel_requested.set()
 
         await asyncio.wait(self._slots, timeout=self._settings.graceful_timeout_seconds)
 
@@ -126,21 +132,25 @@ class Worker:
                 continue
             await self._execute(claimed)
 
-    async def _heartbeat_loop(self, job: ActiveJob, lease_lost: asyncio.Event) -> None:
-        """Renew the lease every heartbeat interval; the moment renewal is
-        fenced off, this attempt must stop making writes."""
+    async def _heartbeat_loop(self, execution: _Execution) -> None:
+        """Renew the lease every heartbeat interval; the renewal is also the
+        durable control channel — a pause or cancel request the API wrote to
+        the Job row surfaces here and is raised to the handler at its next
+        safe checkpoint (ADR-0003). The moment renewal is fenced off, this
+        attempt must stop making writes."""
+        job = execution.job
         try:
             while True:
                 await asyncio.sleep(job.settings.heartbeat_seconds)
                 async with self._session_factory() as session:
-                    renewed = await jobs.extend_lease(
+                    status = await jobs.extend_lease(
                         session,
                         job_id=job.id,
                         fencing_token=job.fencing_token,
                         lease_seconds=job.settings.lease_seconds,
                     )
-                if not renewed:
-                    lease_lost.set()
+                if status is None:
+                    execution.lease_lost.set()
                     log.warning(
                         "worker %s lost the lease on job %s (attempt %s)",
                         self.worker_id,
@@ -148,6 +158,10 @@ class Worker:
                         job.attempt,
                     )
                     return
+                if status == "cancel_requested":
+                    execution.cancel_requested.set()
+                elif status == "pause_requested":
+                    execution.pause_requested.set()
         except asyncio.CancelledError:
             pass
 
@@ -155,6 +169,7 @@ class Worker:
         execution = _Execution(
             job=job,
             cancel_requested=asyncio.Event(),
+            pause_requested=asyncio.Event(),
             lease_lost=asyncio.Event(),
         )
         self._active[job.id] = execution
@@ -185,12 +200,13 @@ class Worker:
 
         heartbeat_task: asyncio.Task[None] | None = None
         if not self._faults.skip_heartbeats:
-            heartbeat_task = asyncio.create_task(self._heartbeat_loop(job, execution.lease_lost))
+            heartbeat_task = asyncio.create_task(self._heartbeat_loop(execution))
 
         ctx = JobContext(
             self._session_factory,
             job,
             cancel_requested=execution.cancel_requested,
+            pause_requested=execution.pause_requested,
             lease_lost=execution.lease_lost,
         )
         log.info(
@@ -205,6 +221,8 @@ class Worker:
                 await handler(ctx)
         except JobCancelled:
             await self._finalize_cancel(job)
+        except JobPaused:
+            await self._finalize_pause(job)
         except LeaseLostError:
             await self._abandon(job)
         except TimeoutError:
@@ -234,14 +252,33 @@ class Worker:
                 session, job_id=job.id, fencing_token=job.fencing_token
             )
             if not completed:
-                # The normal outcome was fenced off — most plausibly a
-                # cancellation request landed (whose result never advances
-                # state, ADR-0003). Land the cancellation instead.
-                await jobs.cancel_job(session, job_id=job.id, fencing_token=job.fencing_token)
+                # The normal outcome was fenced off — a control request
+                # landed whose result never advances the normal state
+                # (ADR-0003): land the cancellation, or the pause the handler
+                # finished without observing.
+                cancelled = await jobs.cancel_job(
+                    session, job_id=job.id, fencing_token=job.fencing_token
+                )
+                if not cancelled:
+                    await jobs.mark_paused(session, job_id=job.id, fencing_token=job.fencing_token)
+
+    async def _finalize_pause(self, job: ActiveJob) -> None:
+        async with self._session_factory() as session:
+            paused = await jobs.mark_paused(session, job_id=job.id, fencing_token=job.fencing_token)
+        if not paused:
+            await self._abandon(job)
 
     async def _finalize_cancel(self, job: ActiveJob) -> None:
         async with self._session_factory() as session:
-            await jobs.cancel_job(session, job_id=job.id, fencing_token=job.fencing_token)
+            cancelled = await jobs.cancel_job(
+                session, job_id=job.id, fencing_token=job.fencing_token
+            )
+        if not cancelled:
+            # The cancellation could not land under this attempt's token —
+            # most plausibly a newer attempt took over, or the Job already
+            # holds a different control state someone else will land. This
+            # attempt only closes its own bookkeeping.
+            await self._abandon(job)
 
     async def _fail(self, job: ActiveJob, failure_class: str, error: str) -> None:
         async with self._session_factory() as session:

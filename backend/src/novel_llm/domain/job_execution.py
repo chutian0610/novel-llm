@@ -47,6 +47,12 @@ class JobCancelled(Exception):
     stopped without continuing its normal outcome."""
 
 
+class JobPaused(Exception):
+    """The Job observed a pause request at a safe checkpoint and stopped: the
+    attempt ends paused, the Job consumes no lease, and a resume requeues it
+    for a fresh attempt that continues from the checkpoint."""
+
+
 class LeaseLostError(Exception):
     """This attempt's lease was taken over by a newer attempt; every further
     write would be fenced off. The handler must stop immediately."""
@@ -55,8 +61,9 @@ class LeaseLostError(Exception):
 class JobContext:
     """What a Job handler sees: its bound payload, its attempt identity, and
     durable step/checkpoint writes. Control signals arrive as asyncio events
-    set by the runtime (cancellation requests) or as :class:`LeaseLostError`
-    raised from the next context call (lease taken over)."""
+    set by the runtime from the durable request the API wrote to the Job row
+    (surfaced by the heartbeat), or as :class:`LeaseLostError` raised from
+    the next context call (lease taken over)."""
 
     def __init__(
         self,
@@ -64,10 +71,12 @@ class JobContext:
         job: ActiveJob,
         *,
         cancel_requested: asyncio.Event,
+        pause_requested: asyncio.Event,
         lease_lost: asyncio.Event,
     ) -> None:
         self._session_factory = session_factory
         self._cancel_requested = cancel_requested
+        self._pause_requested = pause_requested
         self._lease_lost = lease_lost
         self.job_id = job.id
         self.project_id = job.project_id
@@ -80,6 +89,10 @@ class JobContext:
     @property
     def cancel_requested(self) -> bool:
         return self._cancel_requested.is_set()
+
+    @property
+    def pause_requested(self) -> bool:
+        return self._pause_requested.is_set()
 
     def _raise_if_lease_lost(self) -> None:
         if self._lease_lost.is_set():
@@ -116,6 +129,10 @@ class JobContext:
             raise JobCancelled(
                 f"the cancellation request was honored at the safe checkpoint "
                 f"before step {step_key!r}"
+            )
+        if self._pause_requested.is_set():
+            raise JobPaused(
+                f"the pause request was honored at the safe checkpoint before step {step_key!r}"
             )
 
         result = await effect()

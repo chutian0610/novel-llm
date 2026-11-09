@@ -668,3 +668,187 @@ async def test_a_cancellation_request_is_honored_at_the_next_safe_checkpoint(
         "cancelling",
         "cancelled",
     ]
+
+
+async def test_a_paused_job_stops_at_the_next_safe_checkpoint_and_resume_continues(
+    client: httpx.AsyncClient,
+    create_project: CreateProject,
+    start_worker: Callable[..., WorkerHandle],
+) -> None:
+    """The Author pauses a running Job as a domain action; the Worker honors
+    the request at the next safe checkpoint, the attempt ends paused, and the
+    Job sits paused consuming no lease. Resuming — again as a domain action —
+    requeues it: a new attempt with a new fencing token claims it and
+    continues from the checkpoint without losing completed steps."""
+    project_id = (await create_project())["id"]
+    # Each step paces 3s: the request surfaces to the handler through the
+    # heartbeat within at most heartbeat_seconds (2s, database-owned for this
+    # Job Type), and the next safe checkpoint after 'draft' sits a full delay
+    # later — the honor always beats the surfacing, never the reverse.
+    run = await _create_run(client, project_id, _run_body(step_delay_ms=3000))
+    job_id = (await _get_run(client, run["id"]))["jobs"][0]["id"]
+
+    start_worker(graceful_timeout_seconds=30.0)
+    await _wait_for_job_attempt(client, job_id, attempt=1)
+    await _wait_for_checkpoint(client, job_id, "after:draft")
+
+    paused_response = await client.post(f"/api/v1/jobs/{job_id}/pause")
+    assert paused_response.status_code == 200, paused_response.text
+    assert paused_response.json()["status"] == "pause_requested"
+
+    paused = await _wait_for_job(client, job_id, "paused")
+    assert paused["attempt"] == 1
+    assert [attempt["outcome"] for attempt in paused["attempts"]] == ["paused"]
+    # The pause took effect at the safe checkpoint between the steps: the
+    # committed 'draft' stays, and 'polish' — begun just before the pause
+    # landed — never ran its effect: it stays started with no result.
+    steps = {step["step_key"]: step for step in paused["steps"]}
+    assert steps["draft"]["status"] == "succeeded"
+    assert steps["polish"]["status"] == "started"
+    assert steps["polish"]["result"] is None
+    assert [checkpoint["checkpoint_key"] for checkpoint in paused["checkpoints"]] == ["after:draft"]
+
+    resumed_response = await client.post(f"/api/v1/jobs/{job_id}/resume")
+    assert resumed_response.status_code == 200, resumed_response.text
+    assert resumed_response.json()["status"] == "ready"
+
+    job = await _wait_for_job(client, job_id, "succeeded", timeout=40.0)
+    assert job["attempt"] == 2  # resume requeues: a fresh attempt claims it
+    assert [attempt["attempt"] for attempt in job["attempts"]] == [1, 2]
+    assert job["attempts"][0]["fencing_token"] < job["attempts"][1]["fencing_token"]
+    assert (await _get_run(client, run["id"]))["status"] == "succeeded"
+    events = await _replay_events(client, project_id)
+    assert _job_state_path(events, job_id) == [
+        "ready",
+        "leased",
+        "running",
+        "pause_requested",
+        "paused",
+        "ready",  # the resume requeues the Job
+        "leased",
+        "running",
+        "succeeded",
+    ]
+
+
+async def test_an_api_cancellation_stops_the_job_and_its_late_step_results_stay_inert(
+    client: httpx.AsyncClient,
+    create_project: CreateProject,
+    start_worker: Callable[..., WorkerHandle],
+) -> None:
+    """The Author cancels a running Job as a domain action. The in-flight
+    step may still commit its result — a late result never advances the
+    normal outcome: the Job lands cancelled, its Workflow Run cancelled, and
+    no later step ever runs."""
+    project_id = (await create_project())["id"]
+    # The choreography leans on three durations measured from the same claim
+    # instant: the step delay (1.5s) < the first heartbeat (2s, database-
+    # owned for this Job Type) < two delays (3s). The request therefore
+    # always surfaces after 'draft' has committed its late result and before
+    # 'polish's boundary check — the ordering is structural, not a race.
+    run = await _create_run(client, project_id, _run_body(step_delay_ms=1500))
+    job_id = (await _get_run(client, run["id"]))["jobs"][0]["id"]
+
+    start_worker(graceful_timeout_seconds=30.0)
+    await _wait_for_job_attempt(client, job_id, attempt=1)
+
+    cancel_response = await client.post(f"/api/v1/jobs/{job_id}/cancel")
+    assert cancel_response.status_code == 200, cancel_response.text
+    assert cancel_response.json()["status"] == "cancel_requested"
+
+    job = await _wait_for_job(client, job_id, "cancelled", timeout=30.0)
+    assert job["failure_class"] == "cancelled"
+    assert [attempt["outcome"] for attempt in job["attempts"]] == ["cancelled"]
+    # 'draft' was in flight when the request landed and its result still
+    # committed — but the normal outcome never happened: 'polish' stays an
+    # unfinished begin, and the Job and its run are cancelled.
+    steps = {step["step_key"]: step for step in job["steps"]}
+    assert steps["draft"]["status"] == "succeeded"
+    assert steps["polish"]["status"] == "started"
+    assert steps["polish"]["result"] is None
+    assert (await _get_run(client, run["id"]))["status"] == "cancelled"
+    events = await _replay_events(client, project_id)
+    assert _job_state_path(events, job_id) == [
+        "ready",
+        "leased",
+        "running",
+        "cancel_requested",
+        "cancelling",
+        "cancelled",
+    ]
+
+
+async def test_control_actions_refuse_states_the_lifecycle_does_not_allow(
+    client: httpx.AsyncClient,
+    create_project: CreateProject,
+    start_worker: Callable[..., WorkerHandle],
+) -> None:
+    """Control actions are domain actions with a place in the lifecycle, not
+    generic state patches (ADR-0008): pausing, resuming, or cancelling
+    outside their states is a 409 problem with a stable code, and an unknown
+    Job a 404."""
+    project_id = (await create_project())["id"]
+    run = await _create_run(client, project_id, _run_body())
+    job_id = (await _get_run(client, run["id"]))["jobs"][0]["id"]
+
+    start_worker()
+    succeeded = await _wait_for_job(client, job_id, "succeeded")
+
+    for action in ("pause", "resume", "cancel"):
+        response = await client.post(f"/api/v1/jobs/{job_id}/{action}")
+        assert response.status_code == 409, f"{action}: {response.text}"
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json()["code"] == "job_state_conflict"
+
+    unknown = await client.post("/api/v1/jobs/00000000-0000-0000-0000-000000000000/cancel")
+    assert unknown.status_code == 404, unknown.text
+    assert unknown.json()["code"] == "job_not_found"
+
+    after = await _get_job(client, job_id)
+    assert after == succeeded  # the refused actions changed nothing
+
+
+async def test_a_pause_request_on_a_dead_worker_is_recovered_by_takeover(
+    client: httpx.AsyncClient,
+    create_project: CreateProject,
+    start_worker: Callable[..., WorkerHandle],
+) -> None:
+    """A Worker dies (heartbeats off, stalled) holding a Job the Author
+    paused: the durable pause request never reaches its handler, the lease
+    expires, and recovery must not wedge the queue — the Job is interrupted,
+    taken over by a healthy Worker under a new attempt, and completes."""
+    project_id = (await create_project())["id"]
+    run = await _create_run(
+        client,
+        project_id,
+        _run_body(stall_after_step="draft", stall_on_attempt=1, stall_ms=20_000),
+    )
+    job_id = (await _get_run(client, run["id"]))["jobs"][0]["id"]
+
+    start_worker(skip_heartbeats=True)  # worker A: stalls mid-job
+    await _wait_for_job_attempt(client, job_id, attempt=1)
+    await _wait_for_checkpoint(client, job_id, "after:draft")
+
+    paused_response = await client.post(f"/api/v1/jobs/{job_id}/pause")
+    assert paused_response.status_code == 200, paused_response.text
+    # A never observes the request (its heartbeats are off) and stays stalled.
+
+    recovering = start_worker()  # worker B: healthy, waiting out the lease
+    job = await _wait_for_job(client, job_id, "succeeded", timeout=40.0)
+
+    assert job["attempt"] == 2
+    assert [attempt["attempt"] for attempt in job["attempts"]] == [1, 2]
+    assert job["attempts"][0]["outcome"] == "abandoned"
+    assert recovering.worker.worker_id == job["attempts"][1]["worker_id"]
+    assert (await _get_run(client, run["id"]))["status"] == "succeeded"
+    events = await _replay_events(client, project_id)
+    assert _job_state_path(events, job_id) == [
+        "ready",
+        "leased",
+        "running",
+        "pause_requested",
+        "interrupted",  # the expired lease marks the dead Worker's interruption
+        "leased",  # the takeover, under a new fencing token
+        "running",
+        "succeeded",
+    ]
