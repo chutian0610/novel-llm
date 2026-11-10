@@ -59,6 +59,16 @@ class JobNotFound(DomainError):
     title = "Job not found"
 
 
+class JobStateConflict(DomainError):
+    """A Job control action (pause, resume, cancel) the Job's current state
+    does not allow — pause and resume are cooperative control requests with a
+    place in the lifecycle, not generic state patches (ADR-0003, ADR-0008)."""
+
+    status = 409
+    code = "job_state_conflict"
+    title = "Job state does not allow this action"
+
+
 class UnknownWorkflowDefinition(DomainError):
     status = 400
     code = "unknown_workflow_definition"

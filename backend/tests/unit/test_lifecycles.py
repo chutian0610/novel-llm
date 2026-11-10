@@ -37,6 +37,7 @@ JOB_TRANSITIONS: dict[tuple[str, str], str] = {
     ("pause_requested", "pause"): "paused",
     ("pause_requested", "abandon_pause"): "running",
     ("pause_requested", "request_cancel"): "cancel_requested",
+    ("pause_requested", "interrupt"): "interrupted",
     ("paused", "resume"): "ready",
     ("paused", "cancel"): "cancelled",
     ("cancel_requested", "cancel"): "cancelling",

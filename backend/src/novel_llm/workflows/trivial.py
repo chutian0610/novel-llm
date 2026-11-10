@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from novel_llm.domain.job_execution import (
     JobCancelled,
     JobContext,
+    JobPaused,
     QuotaExhaustedFailure,
     TransientJobFailure,
     UpstreamInvalidFailure,
@@ -129,6 +130,10 @@ async def run_trivial_job(ctx: JobContext) -> None:
             raise JobCancelled(
                 f"the cancellation request was honored at the safe checkpoint "
                 f"before step {step_key!r}"
+            )
+        if ctx.pause_requested:
+            raise JobPaused(
+                f"the pause request was honored at the safe checkpoint before step {step_key!r}"
             )
         if step_key in steps_done:
             continue

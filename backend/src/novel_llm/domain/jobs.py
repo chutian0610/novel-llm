@@ -23,7 +23,7 @@ from sqlalchemy import case, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from novel_llm.domain import events
-from novel_llm.domain.errors import JobNotFound
+from novel_llm.domain.errors import JobNotFound, JobStateConflict
 from novel_llm.domain.events import record_event
 from novel_llm.domain.ids import new_id
 from novel_llm.domain.lifecycles import FAILURE_CLASSES, JobLifecycle, transition_target
@@ -343,9 +343,12 @@ async def begin_execution(session: AsyncSession, *, job_id: UUID, fencing_token:
 
 async def extend_lease(
     session: AsyncSession, *, job_id: UUID, fencing_token: int, lease_seconds: int
-) -> bool:
-    """One heartbeat: renew the lease window, fenced. False means the lease
-    was lost — the Worker must stop this attempt immediately."""
+) -> str | None:
+    """One heartbeat: renew the lease window, fenced. Returns the Job's
+    status after the renewal — the durable control channel: a pause or cancel
+    request landed by the API becomes visible to the executing attempt here.
+    None means the lease was lost — the Worker must stop this attempt
+    immediately."""
     now = _now()
     result = await session.execute(
         update(JobRow)
@@ -359,10 +362,11 @@ async def extend_lease(
             last_heartbeat_at=now,
             updated_at=now,
         )
+        .returning(JobRow.status)
     )
     await session.commit()
-    rowcount: int = result.rowcount  # type: ignore[attr-defined]  # CursorResult
-    return rowcount == 1
+    status = result.scalar_one_or_none()
+    return status
 
 
 async def begin_step(
@@ -586,9 +590,12 @@ async def fail_job(
     return target
 
 
-async def request_cancellation(session: AsyncSession, *, job_id: UUID, fencing_token: int) -> bool:
-    """running -> cancel_requested: a cooperative control request the handler
-    honors at its next safe checkpoint (ADR-0003). Fenced."""
+async def request_cooperative_cancellation(
+    session: AsyncSession, *, job_id: UUID, fencing_token: int
+) -> bool:
+    """Worker-side: running -> cancel_requested — the cooperative
+    cancellation request of the shutdown sequence for a Job this Worker is
+    executing (ADR-0003). Fenced."""
     target = transition_target(JobLifecycle, "running", "request_cancel")
     now = _now()
     row = (
@@ -609,6 +616,148 @@ async def request_cancellation(session: AsyncSession, *, job_id: UUID, fencing_t
     _stage_job_event(session, row, from_status="running", to_status=target, attempt=row.attempt)
     await session.commit()
     return True
+
+
+async def request_pause(session: AsyncSession, *, job_id: UUID) -> str:
+    """Author control action (ADR-0003): running -> pause_requested. The
+    executing attempt observes the durable request at its next safe
+    checkpoint and honors it there. Unfenced — the Author requests against
+    the Job, not any particular attempt; raises :class:`JobStateConflict`
+    when the current state has no request_pause transition."""
+    return await _control_transition(
+        session,
+        job_id=job_id,
+        from_status="running",
+        event="request_pause",
+    )
+
+
+async def request_cancellation(session: AsyncSession, *, job_id: UUID) -> str:
+    """Author control action (ADR-0003): request cancellation. A Job with
+    in-flight work (running, pause_requested) lands as cancel_requested —
+    the Worker honors it at the next safe checkpoint, and a late step result
+    may commit but never advances the normal outcome. A Job with no in-flight
+    work (leased, paused) is cancelled directly. Re-requesting an already
+    cancelling Job returns its current state; any other state raises
+    :class:`JobStateConflict`."""
+    now = _now()
+    row = (
+        await session.execute(select(JobRow).where(JobRow.id == job_id).with_for_update())
+    ).scalar_one_or_none()
+    if row is None:
+        await session.rollback()
+        raise JobNotFound(f"no Job with id {job_id}")
+
+    if row.status in ("cancel_requested", "cancelling"):
+        status = row.status
+        await session.commit()  # idempotent re-request: release the lock
+        return status
+
+    if row.status in ("running", "pause_requested"):
+        await session.commit()  # release the lock; the helper re-checks state
+        return await _control_transition(
+            session, job_id=job_id, from_status=row.status, event="request_cancel"
+        )
+
+    if row.status in ("leased", "paused"):
+        # No in-flight work to wait out: cancel directly.
+        from_status = row.status
+        target = transition_target(JobLifecycle, from_status, "cancel")
+        row.status = target
+        row.failure_class = "cancelled"
+        row.completed_at = now
+        row.updated_at = now
+        if from_status == "leased":
+            await _finish_attempt(
+                session,
+                job_id=job_id,
+                attempt=row.attempt,
+                outcome="cancelled",
+                now=now,
+                failure_class="cancelled",
+            )
+        _stage_job_event(
+            session, row, from_status=from_status, to_status=target, attempt=row.attempt
+        )
+        await _stage_run_transition(session, row.workflow_run_id, "cancel")
+        await session.commit()
+        return target
+
+    # Rollback expires the row's attributes; capture the status first.
+    status = row.status
+    await session.rollback()
+    raise JobStateConflict(f"Job {job_id} in state {status!r} cannot be cancelled")
+
+
+async def mark_paused(session: AsyncSession, *, job_id: UUID, fencing_token: int) -> bool:
+    """Worker-side landing of an honored pause: pause_requested -> paused,
+    fenced, closing the attempt with the paused outcome — the Job consumes no
+    lease while it sits paused, and a resume requeues it for a fresh attempt.
+    False when this attempt no longer owns the Job."""
+    target = transition_target(JobLifecycle, "pause_requested", "pause")
+    now = _now()
+    row = (
+        await session.execute(
+            update(JobRow)
+            .where(
+                JobRow.id == job_id,
+                JobRow.fencing_token == fencing_token,
+                JobRow.status == "pause_requested",
+            )
+            .values(status=target, updated_at=now)
+            .returning(JobRow)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        await session.rollback()
+        return False
+    await _finish_attempt(session, job_id=job_id, attempt=row.attempt, outcome="paused", now=now)
+    _stage_job_event(
+        session, row, from_status="pause_requested", to_status=target, attempt=row.attempt
+    )
+    await session.commit()
+    return True
+
+
+async def resume_job(session: AsyncSession, *, job_id: UUID) -> str:
+    """Author control action (ADR-0003): paused -> ready. Recovery never
+    reopens history — the resume requeues the Job, whose next claim starts a
+    new attempt that continues from the checkpoint. Raises
+    :class:`JobStateConflict` when the Job is not paused."""
+    return await _control_transition(
+        session,
+        job_id=job_id,
+        from_status="paused",
+        event="resume",
+    )
+
+
+async def _control_transition(
+    session: AsyncSession, *, job_id: UUID, from_status: str, event: str
+) -> str:
+    """One Author control action: a machine-validated transition issued as a
+    conditional UPDATE on the expected current state, with its job-state
+    event. Unfenced by design — the Author acts on the Job, not on an
+    attempt. Raises :class:`JobStateConflict` when the state has no such
+    transition or the row moved on concurrently."""
+    target = transition_target(JobLifecycle, from_status, event)
+    now = _now()
+    row = (
+        await session.execute(
+            update(JobRow)
+            .where(JobRow.id == job_id, JobRow.status == from_status)
+            .values(status=target, updated_at=now)
+            .returning(JobRow)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        await session.rollback()
+        raise JobStateConflict(
+            f"Job {job_id} is not in the state {from_status!r} this action requires"
+        )
+    _stage_job_event(session, row, from_status=from_status, to_status=target, attempt=row.attempt)
+    await session.commit()
+    return target
 
 
 async def cancel_job(session: AsyncSession, *, job_id: UUID, fencing_token: int) -> bool:
@@ -682,7 +831,12 @@ async def force_interrupt(
             .with_for_update()
         )
     ).scalar_one_or_none()
-    if row is None or row.status not in ("running", "cancel_requested", "cancelling"):
+    if row is None or row.status not in (
+        "running",
+        "pause_requested",
+        "cancel_requested",
+        "cancelling",
+    ):
         await session.rollback()
         return False
     from_status = row.status

@@ -1,6 +1,8 @@
 """Job resources under /api/v1 (ADR-0008): one Job with its attempts, steps,
 and checkpoints — the observation surface for the runtime's claims, leases,
-fencing tokens, and step idempotency (ADR-0003)."""
+fencing tokens, and step idempotency (ADR-0003) — and the domain actions
+(pause, resume) the Author issues against a running Job, never generic state
+patches."""
 
 from datetime import datetime
 from typing import Annotated, Any
@@ -65,18 +67,9 @@ class JobResource(BaseModel):
     checkpoints: list[CheckpointResource]
 
 
-@router.get(
-    "/jobs/{job_id}",
-    response_model=JobResource,
-    responses={
-        404: {"model": Problem, "description": "Job not found"},
-        400: {"model": Problem, "description": "Malformed job id"},
-    },
-)
-async def get_job(
-    job_id: UUID,
-    session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> JobResource:
+async def _job_resource(session: AsyncSession, job_id: UUID) -> JobResource:
+    """One Job with its attempts, steps, and checkpoints — the response of
+    both the read and the domain-action endpoints."""
     row = await jobs_domain.get_job(session, job_id)
     attempts = await jobs_domain.list_job_attempts(session, job_id)
     steps = await jobs_domain.list_job_steps(session, job_id)
@@ -127,3 +120,77 @@ async def get_job(
             for checkpoint in checkpoints
         ],
     )
+
+
+@router.get(
+    "/jobs/{job_id}",
+    response_model=JobResource,
+    responses={
+        404: {"model": Problem, "description": "Job not found"},
+        400: {"model": Problem, "description": "Malformed job id"},
+    },
+)
+async def get_job(
+    job_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> JobResource:
+    return await _job_resource(session, job_id)
+
+
+@router.post(
+    "/jobs/{job_id}/pause",
+    response_model=JobResource,
+    responses={
+        404: {"model": Problem, "description": "Job not found"},
+        409: {"model": Problem, "description": "Job state does not allow pausing"},
+        400: {"model": Problem, "description": "Malformed job id"},
+    },
+)
+async def pause_job(
+    job_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> JobResource:
+    """Domain action (ADR-0008): request a cooperative pause. The executing
+    Worker honors it at the Job's next safe checkpoint."""
+    await jobs_domain.request_pause(session, job_id=job_id)
+    return await _job_resource(session, job_id)
+
+
+@router.post(
+    "/jobs/{job_id}/resume",
+    response_model=JobResource,
+    responses={
+        404: {"model": Problem, "description": "Job not found"},
+        409: {"model": Problem, "description": "Job state does not allow resuming"},
+        400: {"model": Problem, "description": "Malformed job id"},
+    },
+)
+async def resume_job(
+    job_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> JobResource:
+    """Domain action (ADR-0008): resume a paused Job. History is never
+    reopened — the Job requeues and its next attempt continues from the
+    checkpoint."""
+    await jobs_domain.resume_job(session, job_id=job_id)
+    return await _job_resource(session, job_id)
+
+
+@router.post(
+    "/jobs/{job_id}/cancel",
+    response_model=JobResource,
+    responses={
+        404: {"model": Problem, "description": "Job not found"},
+        409: {"model": Problem, "description": "Job state does not allow cancelling"},
+        400: {"model": Problem, "description": "Malformed job id"},
+    },
+)
+async def cancel_job(
+    job_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> JobResource:
+    """Domain action (ADR-0008): request cancellation. The Job stops without
+    continuing its normal outcome — an in-flight step may finish, but its
+    late result never advances state (ADR-0003)."""
+    await jobs_domain.request_cancellation(session, job_id=job_id)
+    return await _job_resource(session, job_id)
