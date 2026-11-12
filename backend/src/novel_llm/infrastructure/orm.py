@@ -440,3 +440,125 @@ class OutlineIdempotencyKeyRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
+
+
+class BibleIdentityRow(Base):
+    """A stable Story Bible identity (ADR-0004): the name and aliases persist
+    across versions while each Published Bible Version freezes the entries
+    that reference it. The (project_id, name) pair is unique."""
+
+    __tablename__ = "bible_identities"
+    __table_args__ = (
+        CheckConstraint("btrim(name) <> ''", name="ck_bible_identities_name_not_blank"),
+        UniqueConstraint("project_id", "name", name="uq_bible_identities_project_id_name"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    name: Mapped[str] = mapped_column(Text())
+    aliases: Mapped[list] = mapped_column(PgJSONB())
+    revision: Mapped[int] = mapped_column(BigInteger(), server_default="1")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class BibleEntryRow(Base):
+    """One typed Bible Entry on the editable Bible Draft (ADR-0004): the
+    entry_type is the nine-value closed set from the architecture doc; the
+    detail validates against the type's contract in the domain. Entries are
+    frozen into Published Bible Versions at publication; archive (not
+    delete) removes one from the draft's working set."""
+
+    __tablename__ = "bible_entries"
+    __table_args__ = (
+        CheckConstraint(
+            "entry_type IN ("
+            "'character', 'relationship', 'location', 'organization', "
+            "'item', 'rule', 'event', 'style', 'open_question')",
+            name="ck_bible_entries_entry_type",
+        ),
+        CheckConstraint("status IN ('active', 'archived')", name="ck_bible_entries_status"),
+        Index("ix_bible_entries_project_id", "project_id"),
+        Index("ix_bible_entries_identity_id", "identity_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    identity_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    entry_type: Mapped[str] = mapped_column(Text())
+    detail: Mapped[dict] = mapped_column(PgJSONB())
+    status: Mapped[str] = mapped_column(Text(), server_default="active")
+    revision: Mapped[int] = mapped_column(BigInteger(), server_default="1")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class PublishedBibleVersionRow(Base):
+    """One immutable Published Bible Version (ADR-0004): the frozen snapshot
+    of the draft's identities and entries at publication. Append-only —
+    generation-facing references resolve here, never to the draft."""
+
+    __tablename__ = "published_bible_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "version_number",
+            name="uq_published_bible_versions_project_id_version_number",
+        ),
+        CheckConstraint(
+            "version_number >= 1", name="ck_published_bible_versions_version_number_positive"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    version_number: Mapped[int] = mapped_column(Integer())
+    payload_schema_version: Mapped[int] = mapped_column(Integer())
+    entries: Mapped[dict] = mapped_column(PgJSONB())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class BibleIdentityIdempotencyKeyRow(Base):
+    __tablename__ = "bible_identity_idempotency_keys"
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    key: Mapped[str] = mapped_column(Text(), unique=True)
+    request_fingerprint: Mapped[str] = mapped_column(Text())
+    identity_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class BibleEntryIdempotencyKeyRow(Base):
+    __tablename__ = "bible_entry_idempotency_keys"
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    key: Mapped[str] = mapped_column(Text(), unique=True)
+    request_fingerprint: Mapped[str] = mapped_column(Text())
+    entry_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class BiblePublishIdempotencyKeyRow(Base):
+    __tablename__ = "bible_publish_idempotency_keys"
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    key: Mapped[str] = mapped_column(Text(), unique=True)
+    request_fingerprint: Mapped[str] = mapped_column(Text())
+    version_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
