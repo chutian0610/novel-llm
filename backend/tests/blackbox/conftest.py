@@ -34,6 +34,7 @@ from asgi_lifespan import LifespanManager
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+import novel_llm.workflows.model_probe  # noqa: F401 — registers the workflow definitions
 import novel_llm.workflows.trivial  # noqa: F401 — registers the workflow definitions
 from novel_llm.api.app import create_app
 from novel_llm.config import Config, DatabaseSettings, WorkerSettings, load_config
