@@ -562,3 +562,142 @@ class BiblePublishIdempotencyKeyRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
+
+
+class ProviderCredentialRow(Base):
+    """A provider credential (ADR-0006): a plaintext local row, kept separate
+    from Model Profiles. The API masks the key — a complete key never leaves
+    the database through any response."""
+
+    __tablename__ = "provider_credentials"
+    __table_args__ = (
+        CheckConstraint("btrim(name) <> ''", name="ck_provider_credentials_name_not_blank"),
+        CheckConstraint("btrim(provider) <> ''", name="ck_provider_credentials_provider_not_blank"),
+        UniqueConstraint("name", name="uq_provider_credentials_name"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    name: Mapped[str] = mapped_column(Text())
+    provider: Mapped[str] = mapped_column(Text())
+    api_key: Mapped[str] = mapped_column(Text(), server_default="")
+    base_url: Mapped[str | None] = mapped_column(Text())
+    revision: Mapped[int] = mapped_column(BigInteger(), server_default="1")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class ModelProfileRow(Base):
+    """A versioned model configuration (ADR-0006/0008): provider model,
+    sampling, timeout, provider-level retries, and cost — bound to Jobs at
+    creation, kept separate from the credentials it points at."""
+
+    __tablename__ = "model_profiles"
+    __table_args__ = (
+        CheckConstraint("btrim(name) <> ''", name="ck_model_profiles_name_not_blank"),
+        CheckConstraint("btrim(model) <> ''", name="ck_model_profiles_model_not_blank"),
+        CheckConstraint(
+            "temperature >= 0 AND temperature <= 2", name="ck_model_profiles_temperature_range"
+        ),
+        CheckConstraint("top_p > 0 AND top_p <= 1", name="ck_model_profiles_top_p_range"),
+        CheckConstraint("max_tokens > 0", name="ck_model_profiles_max_tokens_positive"),
+        CheckConstraint("timeout_seconds > 0", name="ck_model_profiles_timeout_positive"),
+        CheckConstraint("max_retries >= 0", name="ck_model_profiles_max_retries_non_negative"),
+        UniqueConstraint("name", name="uq_model_profiles_name"),
+        Index("ix_model_profiles_credential_id", "credential_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    name: Mapped[str] = mapped_column(Text())
+    model: Mapped[str] = mapped_column(Text())
+    credential_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    temperature: Mapped[float] = mapped_column(Numeric(4, 3), server_default="0.7")
+    top_p: Mapped[float] = mapped_column(Numeric(4, 3), server_default="1")
+    max_tokens: Mapped[int] = mapped_column(Integer(), server_default="1024")
+    timeout_seconds: Mapped[int] = mapped_column(Integer(), server_default="30")
+    max_retries: Mapped[int] = mapped_column(Integer(), server_default="0")
+    input_token_cost: Mapped[float] = mapped_column(Numeric(12, 9), server_default="0")
+    output_token_cost: Mapped[float] = mapped_column(Numeric(12, 9), server_default="0")
+    revision: Mapped[int] = mapped_column(BigInteger(), server_default="1")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class ModelTraceRow(Base):
+    """One full model-call trace (ADR-0008): rendered prompt, completion,
+    metadata, latency, token use, cost — and the repair linkage, so the
+    original call and its at-most-one repair are both retained in full.
+    Append-only."""
+
+    __tablename__ = "model_traces"
+    __table_args__ = (
+        CheckConstraint(
+            "output_kind IN ('write', 'evaluate', 'diagnose', 'extract', 'project')",
+            name="ck_model_traces_output_kind",
+        ),
+        CheckConstraint("input_tokens >= 0", name="ck_model_traces_input_tokens_non_negative"),
+        CheckConstraint("output_tokens >= 0", name="ck_model_traces_output_tokens_non_negative"),
+        CheckConstraint("latency_ms >= 0", name="ck_model_traces_latency_non_negative"),
+        CheckConstraint("cost >= 0", name="ck_model_traces_cost_non_negative"),
+        CheckConstraint("btrim(template_key) <> ''", name="ck_model_traces_template_key_not_blank"),
+        Index("ix_model_traces_project_id", "project_id"),
+        Index("ix_model_traces_repair_of_id", "repair_of_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    model_profile_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    template_key: Mapped[str] = mapped_column(Text())
+    template_version: Mapped[int] = mapped_column(Integer())
+    output_kind: Mapped[str] = mapped_column(Text())
+    prompt: Mapped[str] = mapped_column(Text())
+    completion: Mapped[str] = mapped_column(Text())
+    # `metadata` is taken by DeclarativeBase; the column keeps the name.
+    call_metadata: Mapped[dict] = mapped_column("metadata", PgJSONB())
+    input_tokens: Mapped[int] = mapped_column(Integer())
+    output_tokens: Mapped[int] = mapped_column(Integer())
+    latency_ms: Mapped[int] = mapped_column(Integer())
+    cost: Mapped[float] = mapped_column(Numeric(14, 9))
+    repair_of_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class ModelCredentialIdempotencyKeyRow(Base):
+    """A create-attempt key for a provider credential; the unique key is what
+    PostgreSQL enforces, the fingerprint detects reuse with a different
+    payload."""
+
+    __tablename__ = "model_credential_idempotency_keys"
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    key: Mapped[str] = mapped_column(Text(), unique=True)
+    request_fingerprint: Mapped[str] = mapped_column(Text())
+    credential_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class ModelProfileIdempotencyKeyRow(Base):
+    """A create-attempt key for a Model Profile; the unique key is what
+    PostgreSQL enforces, the fingerprint detects reuse with a different
+    payload."""
+
+    __tablename__ = "model_profile_idempotency_keys"
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    key: Mapped[str] = mapped_column(Text(), unique=True)
+    request_fingerprint: Mapped[str] = mapped_column(Text())
+    profile_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )

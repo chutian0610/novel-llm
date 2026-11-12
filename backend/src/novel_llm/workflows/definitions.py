@@ -10,11 +10,12 @@ Registration is explicit: entrypoints (API factory, worker main) import the
 modules that define workflows, keeping the import graph acyclic.
 """
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,10 @@ class WorkflowDefinition:
     job_payload: Callable[[BaseModel], dict[str, Any]]
     # Job transition event -> Workflow Run transition event.
     run_transition_for_job_event: dict[str, str]
+    # Optional transactional validation of the payload's references (e.g. a
+    # bound model profile must exist) — runs inside the run-creation
+    # transaction (ADR-0009).
+    validate_payload: Callable[[AsyncSession, BaseModel], Awaitable[None]] | None = None
 
 
 DEFINITIONS: dict[str, WorkflowDefinition] = {}

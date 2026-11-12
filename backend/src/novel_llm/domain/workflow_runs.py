@@ -79,6 +79,9 @@ async def create_workflow_run(
         )
         raise InvalidWorkflowPayload(summary) from None
 
+    if definition.validate_payload is not None:
+        await definition.validate_payload(session, validated)
+
     fingerprint = request_fingerprint(definition_key, validated.model_dump(mode="json"))
     now = datetime.now(UTC)
     run_id = new_id()

@@ -94,6 +94,12 @@ class JobContext:
     def pause_requested(self) -> bool:
         return self._pause_requested.is_set()
 
+    @property
+    def session_factory(self) -> async_sessionmaker[AsyncSession]:
+        """Short-lived sessions for the handler's own services (e.g. the
+        model gateway) — the same factory every context write uses."""
+        return self._session_factory
+
     def _raise_if_lease_lost(self) -> None:
         if self._lease_lost.is_set():
             raise LeaseLostError(

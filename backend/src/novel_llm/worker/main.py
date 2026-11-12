@@ -8,6 +8,7 @@ import asyncio
 import logging
 import signal
 
+import novel_llm.workflows.model_probe  # noqa: F401 — registers the workflow definitions
 import novel_llm.workflows.trivial  # noqa: F401 — registers the workflow definitions
 from novel_llm.config import load_config
 from novel_llm.infrastructure.db import create_db_engine

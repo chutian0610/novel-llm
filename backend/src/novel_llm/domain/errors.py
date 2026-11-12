@@ -107,6 +107,36 @@ class BibleEntryPayloadInvalid(DomainError):
     title = "Bible entry detail does not match its type contract"
 
 
+class CredentialNotFound(DomainError):
+    status = 404
+    code = "credential_not_found"
+    title = "Provider credential not found"
+
+
+class CredentialNameTaken(DomainError):
+    status = 409
+    code = "credential_name_taken"
+    title = "A provider credential with this name already exists"
+
+
+class ModelProfileNotFound(DomainError):
+    status = 404
+    code = "model_profile_not_found"
+    title = "Model profile not found"
+
+
+class ModelProfileNameTaken(DomainError):
+    status = 409
+    code = "model_profile_name_taken"
+    title = "A model profile with this name already exists"
+
+
+class ModelTraceNotFound(DomainError):
+    status = 404
+    code = "model_trace_not_found"
+    title = "Model trace not found"
+
+
 class StructureOrderInvalid(DomainError):
     """A reorder that does not name every sibling exactly once, in the new
     order — refused before any row moves."""

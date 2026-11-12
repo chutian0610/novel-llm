@@ -595,6 +595,112 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/model-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Credentials */
+        get: operations["list_credentials_api_v1_model_credentials_get"];
+        put?: never;
+        /** Create Credential */
+        post: operations["create_credential_api_v1_model_credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/model-credentials/{credential_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Credential */
+        get: operations["get_credential_api_v1_model_credentials__credential_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Credential */
+        patch: operations["update_credential_api_v1_model_credentials__credential_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/model-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Profiles */
+        get: operations["list_profiles_api_v1_model_profiles_get"];
+        put?: never;
+        /** Create Profile */
+        post: operations["create_profile_api_v1_model_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/model-profiles/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Profile */
+        get: operations["get_profile_api_v1_model_profiles__profile_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Profile */
+        patch: operations["update_profile_api_v1_model_profiles__profile_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/model-traces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Model Traces */
+        get: operations["list_model_traces_api_v1_projects__project_id__model_traces_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/model-traces/{trace_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Model Trace */
+        get: operations["get_model_trace_api_v1_model_traces__trace_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1": {
         parameters: {
             query?: never;
@@ -782,6 +888,20 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** CreateCredentialRequest */
+        CreateCredentialRequest: {
+            /** Name */
+            name: string;
+            /** Provider */
+            provider: string;
+            /**
+             * Api Key
+             * @default
+             */
+            api_key: string;
+            /** Base Url */
+            base_url?: string | null;
+        };
         /** CreateEntryRequest */
         CreateEntryRequest: {
             /**
@@ -805,6 +925,53 @@ export interface components {
             name: string;
             /** Aliases */
             aliases?: string[];
+        };
+        /** CreateProfileRequest */
+        CreateProfileRequest: {
+            /** Name */
+            name: string;
+            /** Model */
+            model: string;
+            /**
+             * Credential Id
+             * Format: uuid
+             */
+            credential_id: string;
+            /**
+             * Temperature
+             * @default 0.7
+             */
+            temperature: number | string;
+            /**
+             * Top P
+             * @default 1
+             */
+            top_p: number | string;
+            /**
+             * Max Tokens
+             * @default 1024
+             */
+            max_tokens: number;
+            /**
+             * Timeout Seconds
+             * @default 30
+             */
+            timeout_seconds: number;
+            /**
+             * Max Retries
+             * @default 0
+             */
+            max_retries: number;
+            /**
+             * Input Token Cost
+             * @default 0
+             */
+            input_token_cost: number | string;
+            /**
+             * Output Token Cost
+             * @default 0
+             */
+            output_token_cost: number | string;
         };
         /** CreateProjectRequest */
         CreateProjectRequest: {
@@ -831,6 +998,11 @@ export interface components {
             payload?: {
                 [key: string]: unknown;
             };
+        };
+        /** CredentialListResource */
+        CredentialListResource: {
+            /** Items */
+            items: components["schemas"]["ProviderCredentialResource"][];
         };
         /** EventEnvelopeResource */
         EventEnvelopeResource: {
@@ -919,6 +1091,84 @@ export interface components {
             /** Failure Class */
             failure_class: string | null;
         };
+        /** ModelProfileResource */
+        ModelProfileResource: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Model */
+            model: string;
+            /** Credential Id */
+            credential_id: string;
+            /** Sampling */
+            sampling: {
+                [key: string]: unknown;
+            };
+            /** Timeout Seconds */
+            timeout_seconds: number;
+            /** Max Retries */
+            max_retries: number;
+            /** Cost */
+            cost: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ModelTraceListResource */
+        ModelTraceListResource: {
+            /** Items */
+            items: components["schemas"]["ModelTraceResource"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** ModelTraceResource */
+        ModelTraceResource: {
+            /** Id */
+            id: string;
+            /** Project Id */
+            project_id: string;
+            /** Model Profile Id */
+            model_profile_id: string;
+            /** Template Key */
+            template_key: string;
+            /** Template Version */
+            template_version: number;
+            /** Output Kind */
+            output_kind: string;
+            /** Prompt */
+            prompt: string;
+            /** Completion */
+            completion: string;
+            /** Metadata */
+            metadata: {
+                [key: string]: unknown;
+            };
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Latency Ms */
+            latency_ms: number;
+            /** Cost */
+            cost: number;
+            /** Repair Of Id */
+            repair_of_id: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** MoveChapterRequest */
         MoveChapterRequest: {
             /**
@@ -966,6 +1216,11 @@ export interface components {
             /** Detail */
             detail?: string | null;
         };
+        /** ProfileListResource */
+        ProfileListResource: {
+            /** Items */
+            items: components["schemas"]["ModelProfileResource"][];
+        };
         /** ProjectListResource */
         ProjectListResource: {
             /** Items */
@@ -985,6 +1240,29 @@ export interface components {
             language: string;
             /** Status */
             status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ProviderCredentialResource */
+        ProviderCredentialResource: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Provider */
+            provider: string;
+            /** Api Key Hint */
+            api_key_hint: string | null;
+            /** Base Url */
+            base_url: string | null;
             /**
              * Created At
              * Format: date-time
@@ -1070,6 +1348,17 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** UpdateCredentialRequest */
+        UpdateCredentialRequest: {
+            /** Name */
+            name?: string | null;
+            /** Provider */
+            provider?: string | null;
+            /** Api Key */
+            api_key?: string | null;
+            /** Base Url */
+            base_url?: string | null;
+        };
         /** UpdateEntryRequest */
         UpdateEntryRequest: {
             /** Detail */
@@ -1083,6 +1372,27 @@ export interface components {
             name: string;
             /** Aliases */
             aliases?: string[];
+        };
+        /** UpdateProfileRequest */
+        UpdateProfileRequest: {
+            /** Name */
+            name?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Temperature */
+            temperature?: number | string | null;
+            /** Top P */
+            top_p?: number | string | null;
+            /** Max Tokens */
+            max_tokens?: number | null;
+            /** Timeout Seconds */
+            timeout_seconds?: number | null;
+            /** Max Retries */
+            max_retries?: number | null;
+            /** Input Token Cost */
+            input_token_cost?: number | string | null;
+            /** Output Token Cost */
+            output_token_cost?: number | string | null;
         };
         /** UpdateProjectRequest */
         UpdateProjectRequest: {
@@ -3377,6 +3687,506 @@ export interface operations {
                 };
             };
             /** @description Project not found, or no such Bible version */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_credentials_api_v1_model_credentials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialListResource"];
+                };
+            };
+        };
+    };
+    create_credential_api_v1_model_credentials_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Idempotent replay: the original credential, not a duplicate */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCredentialResource"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCredentialResource"];
+                };
+            };
+            /** @description Missing or invalid Idempotency-Key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Credential name already taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_credential_api_v1_model_credentials__credential_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCredentialResource"];
+                };
+            };
+            /** @description Credential not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_credential_api_v1_model_credentials__credential_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCredentialResource"];
+                };
+            };
+            /** @description Malformed If-Match header */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Credential not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Credential name already taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description If-Match ETag does not match */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description If-Match header is required */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_profiles_api_v1_model_profiles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileListResource"];
+                };
+            };
+        };
+    };
+    create_profile_api_v1_model_profiles_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Idempotent replay: the original profile, not a duplicate */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelProfileResource"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelProfileResource"];
+                };
+            };
+            /** @description Missing or invalid Idempotency-Key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Referenced credential not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Model profile name already taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_profile_api_v1_model_profiles__profile_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelProfileResource"];
+                };
+            };
+            /** @description Model profile not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_profile_api_v1_model_profiles__profile_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelProfileResource"];
+                };
+            };
+            /** @description Malformed If-Match header */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Model profile not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description If-Match ETag does not match */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description If-Match header is required */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_model_traces_api_v1_projects__project_id__model_traces_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelTraceListResource"];
+                };
+            };
+            /** @description Malformed cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Project not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_model_trace_api_v1_model_traces__trace_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelTraceResource"];
+                };
+            };
+            /** @description Model trace not found */
             404: {
                 headers: {
                     [name: string]: unknown;

@@ -27,6 +27,7 @@ from novel_llm.domain.job_execution import (
     UpstreamInvalidFailure,
 )
 from novel_llm.domain.jobs import ActiveJob
+from novel_llm.models.contracts import ModelOutputInvalid
 from novel_llm.workflows.handlers import resolve_handler
 
 log = logging.getLogger(__name__)
@@ -232,6 +233,10 @@ class Worker:
         except QuotaExhaustedFailure as error:
             await self._fail(job, "quota_exhausted", str(error))
         except UpstreamInvalidFailure as error:
+            await self._fail(job, "upstream_invalid", str(error))
+        except ModelOutputInvalid as error:
+            # The gateway's repair already ran (at most one call); output
+            # that still breaks its contract is the upstream's fault (ADR-0003).
             await self._fail(job, "upstream_invalid", str(error))
         except asyncio.CancelledError:
             await self._force_interrupt(job)

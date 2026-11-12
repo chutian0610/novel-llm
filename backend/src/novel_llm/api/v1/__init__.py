@@ -11,6 +11,8 @@ from pydantic import BaseModel
 from novel_llm.api.v1 import (
     bible,
     jobs,
+    model_traces,
+    models,
     outline,
     project_events,
     projects,
@@ -26,6 +28,8 @@ router.include_router(jobs.router)
 router.include_router(structure.router)
 router.include_router(outline.router)
 router.include_router(bible.router)
+router.include_router(models.router)
+router.include_router(model_traces.router)
 
 
 class APIRoot(BaseModel):
