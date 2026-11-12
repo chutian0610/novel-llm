@@ -11,6 +11,7 @@ import {
   getProject,
   listProjects,
 } from "./actions";
+import { BiblePanel } from "./bible-panel";
 import { OutlinePanel } from "./outline-panel";
 import { ProjectEventsPanel } from "./project-events-panel";
 import { StructurePanel } from "./structure-panel";
@@ -40,6 +41,7 @@ function ProjectDetail({ project }: { project: ProjectView }) {
         <>
           <StructurePanel projectId={project.id} />
           <OutlinePanel projectId={project.id} />
+          <BiblePanel projectId={project.id} />
         </>
       )}
       <ProjectEventsPanel projectId={project.id} />

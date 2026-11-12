@@ -47,6 +47,15 @@ CHAPTER_MOVED = "chapter.moved"
 STRUCTURE_REORDERED = "structure.reordered"
 OUTLINE_PUBLISHED = "outline.published"
 
+# Event types on the Story Bible (ADR-0004): draft edits and publications on
+# the same durable Project feed.
+BIBLE_IDENTITY_CREATED = "bible.identity_created"
+BIBLE_IDENTITY_UPDATED = "bible.identity_updated"
+BIBLE_ENTRY_CREATED = "bible.entry_created"
+BIBLE_ENTRY_UPDATED = "bible.entry_updated"
+BIBLE_ENTRY_ARCHIVED = "bible.entry_archived"
+BIBLE_PUBLISHED = "bible.published"
+
 
 @dataclass(frozen=True, slots=True)
 class DomainEvent:

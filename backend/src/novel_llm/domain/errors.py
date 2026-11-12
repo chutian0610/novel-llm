@@ -77,6 +77,36 @@ class OutlineNotFound(DomainError):
     title = "Outline version not found"
 
 
+class BibleIdentityNotFound(DomainError):
+    status = 404
+    code = "identity_not_found"
+    title = "Bible identity not found"
+
+
+class IdentityNameTaken(DomainError):
+    status = 409
+    code = "identity_name_taken"
+    title = "Bible identity name already taken in this Project"
+
+
+class BibleEntryNotFound(DomainError):
+    status = 404
+    code = "bible_entry_not_found"
+    title = "Bible entry not found"
+
+
+class BibleNotFound(DomainError):
+    status = 404
+    code = "bible_not_found"
+    title = "Published Bible version not found"
+
+
+class BibleEntryPayloadInvalid(DomainError):
+    status = 400
+    code = "bible_entry_payload_invalid"
+    title = "Bible entry detail does not match its type contract"
+
+
 class StructureOrderInvalid(DomainError):
     """A reorder that does not name every sibling exactly once, in the new
     order — refused before any row moves."""
