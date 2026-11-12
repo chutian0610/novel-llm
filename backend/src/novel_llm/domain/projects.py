@@ -275,6 +275,24 @@ async def archive_project(
     )
 
 
+async def lock_active_project(session: AsyncSession, *, project_id: UUID) -> ProjectRow:
+    """Lock the Project row FOR UPDATE inside the caller's transaction and
+    require it to exist and accept edits. Every structure mutation (volumes,
+    chapters, Outline publications) takes this lock, so concurrent writers
+    serialize per Project and reference validation stands in for a physical
+    foreign key (ADR-0009)."""
+    row = (
+        await session.execute(
+            select(ProjectRow).where(ProjectRow.id == project_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise ProjectNotFound(f"no Project with id {project_id}")
+    if row.status == "archived":
+        raise ProjectArchived("an archived Project no longer accepts edits")
+    return row
+
+
 def project_etag(project: Project) -> str:
     """The strong validator for a mutable Project: its revision."""
     return f'"{project.revision}"'

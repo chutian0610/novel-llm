@@ -59,6 +59,39 @@ class JobNotFound(DomainError):
     title = "Job not found"
 
 
+class VolumeNotFound(DomainError):
+    status = 404
+    code = "volume_not_found"
+    title = "Volume not found"
+
+
+class ChapterNotFound(DomainError):
+    status = 404
+    code = "chapter_not_found"
+    title = "Chapter not found"
+
+
+class OutlineNotFound(DomainError):
+    status = 404
+    code = "outline_not_found"
+    title = "Outline version not found"
+
+
+class StructureOrderInvalid(DomainError):
+    """A reorder that does not name every sibling exactly once, in the new
+    order — refused before any row moves."""
+
+    status = 400
+    code = "structure_order_invalid"
+    title = "The reorder does not match the current structure"
+
+
+class InvalidOutlinePayload(DomainError):
+    status = 400
+    code = "invalid_outline_payload"
+    title = "Outline payload does not match the schema"
+
+
 class JobStateConflict(DomainError):
     """A Job control action (pause, resume, cancel) the Job's current state
     does not allow — pause and resume are cooperative control requests with a

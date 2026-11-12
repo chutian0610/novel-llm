@@ -14,8 +14,8 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from novel_llm.api.dependencies import get_db_session
-from novel_llm.api.headers import check_idempotency_key
-from novel_llm.api.problems import Problem, ProblemError
+from novel_llm.api.headers import check_idempotency_key, parse_if_match
+from novel_llm.api.problems import Problem
 from novel_llm.domain import projects
 from novel_llm.domain.projects import Project, ProjectChanges, Unset
 
@@ -149,24 +149,6 @@ class UpdateProjectRequest(BaseModel):
         return value.strip() if value is not None else None
 
 
-def _expected_revision(if_match: str | None) -> int | None:
-    """Parse If-Match into the expected revision. `*` maps to None, meaning
-    any current version is accepted; a missing header is a 428, a malformed
-    one a 400."""
-    value = (if_match or "").strip()
-    if not value:
-        raise ProblemError(
-            status=428,
-            code="missing_if_match",
-            title="If-Match header is required to change a mutable object",
-        )
-    if value == "*":
-        return None
-    if value.startswith('"') and value.endswith('"') and value[1:-1].isdigit():
-        return int(value[1:-1])
-    raise ProblemError(status=400, code="malformed_if_match", title="If-Match header is malformed")
-
-
 def _changes(payload: UpdateProjectRequest) -> ProjectChanges:
     """Fields the client explicitly sent become changes; explicitly-null
     fields clear, absent fields stay untouched."""
@@ -189,7 +171,7 @@ async def update_project(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
 ) -> ProjectResource:
-    expected_revision = _expected_revision(if_match)
+    expected_revision = parse_if_match(if_match)
     project = await projects.update_project(
         session,
         project_id=project_id,
@@ -211,7 +193,7 @@ async def archive_project(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
 ) -> ProjectResource:
-    expected_revision = _expected_revision(if_match)
+    expected_revision = parse_if_match(if_match)
     project = await projects.archive_project(
         session, project_id=project_id, expected_revision=expected_revision
     )

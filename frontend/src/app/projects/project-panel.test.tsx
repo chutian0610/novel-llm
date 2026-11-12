@@ -10,6 +10,11 @@ const { listProjects, createProject, getProject, archiveProject } = vi.hoisted((
 
 vi.mock("./actions", () => ({ listProjects, createProject, getProject, archiveProject }));
 
+// The detail view embeds the structure and Outline panels; they own their
+// own data fetching and are covered by their own tests.
+vi.mock("./structure-panel", () => ({ StructurePanel: () => <div>结构面板</div> }));
+vi.mock("./outline-panel", () => ({ OutlinePanel: () => <div>Outline 面板</div> }));
+
 import { ProjectPanel } from "./project-panel";
 import type { ProjectView } from "./actions";
 

@@ -11,7 +11,9 @@ import {
   getProject,
   listProjects,
 } from "./actions";
+import { OutlinePanel } from "./outline-panel";
 import { ProjectEventsPanel } from "./project-events-panel";
+import { StructurePanel } from "./structure-panel";
 
 function StatusBadge({ status }: { status: string }) {
   return (
@@ -34,6 +36,12 @@ function ProjectDetail({ project }: { project: ProjectView }) {
         <dt>更新于</dt>
         <dd>{project.updatedAt}</dd>
       </dl>
+      {project.status === "active" && (
+        <>
+          <StructurePanel projectId={project.id} />
+          <OutlinePanel projectId={project.id} />
+        </>
+      )}
       <ProjectEventsPanel projectId={project.id} />
     </div>
   );
