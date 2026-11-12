@@ -305,3 +305,138 @@ class JobCheckpointRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
+
+
+class VolumeRow(Base):
+    """An ordered grouping of Chapters inside a Project (ADR-0004): stable
+    identity, mutable position — reordering renumbers positions without
+    touching identities. The project_id reference is a typed UUID column;
+    domain services validate it transactionally (ADR-0009, no physical
+    foreign keys)."""
+
+    __tablename__ = "volumes"
+    __table_args__ = (
+        CheckConstraint("position >= 1", name="position_positive"),
+        CheckConstraint("btrim(title) <> ''", name="title_not_blank"),
+        Index("ix_volumes_project_id_position", "project_id", "position"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    title: Mapped[str] = mapped_column(Text())
+    position: Mapped[int] = mapped_column(Integer())
+    revision: Mapped[int] = mapped_column(BigInteger(), server_default="1")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class VolumeIdempotencyKeyRow(Base):
+    """A create-attempt key for a Volume; the unique key is what PostgreSQL
+    enforces, the fingerprint detects reuse with a different payload."""
+
+    __tablename__ = "volume_idempotency_keys"
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    key: Mapped[str] = mapped_column(Text(), unique=True)
+    request_fingerprint: Mapped[str] = mapped_column(Text())
+    volume_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class ChapterRow(Base):
+    """The primary editorial unit of a Project (ADR-0004): stable identity,
+    mutable position inside its Volume. Later tickets point it at one
+    Canonical Chapter Version. References (project_id, volume_id) are typed
+    UUID columns validated transactionally by domain services (ADR-0009)."""
+
+    __tablename__ = "chapters"
+    __table_args__ = (
+        CheckConstraint("position >= 1", name="position_positive"),
+        CheckConstraint("btrim(title) <> ''", name="title_not_blank"),
+        # Deferred in the migration: one reorder transaction renumbers
+        # siblings without transient conflicts at commit.
+        UniqueConstraint(
+            "volume_id",
+            "position",
+            name="uq_chapters_volume_id_position",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        Index("ix_chapters_volume_id_position", "volume_id", "position"),
+        Index("ix_chapters_project_id", "project_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    volume_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    title: Mapped[str] = mapped_column(Text())
+    position: Mapped[int] = mapped_column(Integer())
+    revision: Mapped[int] = mapped_column(BigInteger(), server_default="1")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class ChapterIdempotencyKeyRow(Base):
+    """A create-attempt key for a Chapter; the unique key is what PostgreSQL
+    enforces, the fingerprint detects reuse with a different payload."""
+
+    __tablename__ = "chapter_idempotency_keys"
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    key: Mapped[str] = mapped_column(Text(), unique=True)
+    request_fingerprint: Mapped[str] = mapped_column(Text())
+    chapter_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class OutlineRow(Base):
+    """One immutable Outline version (ADR-0004): work, volume, chapter,
+    scene, foreshadowing, and constraint plans frozen at publication, bound
+    to the payload schema version that shaped them. Append-only — changes
+    publish a new version, history is never rewritten."""
+
+    __tablename__ = "outlines"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "version_number", name="uq_outlines_project_id_version_number"
+        ),
+        CheckConstraint("version_number >= 1", name="version_number_positive"),
+        Index("ix_outlines_project_id", "project_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    version_number: Mapped[int] = mapped_column(Integer())
+    payload_schema_version: Mapped[int] = mapped_column(Integer())
+    plans: Mapped[dict] = mapped_column(PgJSONB())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class OutlineIdempotencyKeyRow(Base):
+    """A create-attempt key for an Outline publication; the unique key is
+    what PostgreSQL enforces, the fingerprint detects reuse with a different
+    payload."""
+
+    __tablename__ = "outline_idempotency_keys"
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    key: Mapped[str] = mapped_column(Text(), unique=True)
+    request_fingerprint: Mapped[str] = mapped_column(Text())
+    outline_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )

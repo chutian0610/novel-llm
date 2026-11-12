@@ -36,6 +36,17 @@ PROJECT_ARCHIVED = "project.archived"
 WORKFLOW_RUN_STATE_CHANGED = "workflow_run.state_changed"
 JOB_STATE_CHANGED = "job.state_changed"
 
+# Event types on the story structure (ADR-0004): stable identities and
+# mutable positions — reorders and moves are structure events on the same
+# durable Project feed.
+VOLUME_CREATED = "volume.created"
+VOLUME_UPDATED = "volume.updated"
+CHAPTER_CREATED = "chapter.created"
+CHAPTER_UPDATED = "chapter.updated"
+CHAPTER_MOVED = "chapter.moved"
+STRUCTURE_REORDERED = "structure.reordered"
+OUTLINE_PUBLISHED = "outline.published"
+
 
 @dataclass(frozen=True, slots=True)
 class DomainEvent:
